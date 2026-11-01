@@ -88,6 +88,6 @@ Preconditions:
 
 - Swap the template's files out before the first build. A consumer that holds both the template's `Program.cs` and the driver has two files of top-level statements and fails with CS8802.
 - Each driver uses a database of its own, `VerifySpecificationPagedEFCore` or `VerifySpecificationPagedEF6`, and drops it at the end. A driver killed midway leaves it behind, and its next run drops it first.
-- EF6 refuses `Skip` on input it can't see as sorted, and a specification can't order the rows a `SelectMany` flattens, so EF6's paged methods refuse a `SelectMany` specification before any query. An EF6 `*-selectmany-*` line whose `NotSupportedException` names Skip, or that shows a SQL command, means the provider sent a query before refusing.
+- EF6 refuses `Skip` on input it can't see as sorted, and a specification can't order the rows a `SelectMany` flattens, so EF6's paged methods refuse a `SelectMany` specification before any query. The library's refusal says `EF6 can't page a SelectMany specification`. An EF6 `*-selectmany-*` line with EF6's own message, `The method 'Skip' is only supported for sorted input`, or with a SQL command, means the provider sent a query before refusing.
 - `verify build` prints the errors on stderr and the rest on stdout, so save both with `2>&1`.
 - The drivers and the name-clash files import `OpenSpecification.Paging`, which exists only since #59. They don't build against `$B`, except `OwnPaging.cs` and `UsesBoth.cs`.
