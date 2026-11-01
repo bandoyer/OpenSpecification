@@ -22,9 +22,12 @@ usage() {
 verify doctor                    check the SDK, the SQL Server port, the lock, and the scratch items
 verify tree <git ref>            export that commit of this repository into the scratch root; prints its folder
 verify library <tree>            print the tree's library name: OpenSpecification, or Ardalis.Specification before #47
-verify consumer <tree> [<name>]  make a consumer project that references the tree's EF6 provider; prints its folder
-verify efcore-consumer <tree> [<name>]
-                                 make a consumer project that references the tree's EF Core provider; prints its folder
+verify consumer [--framework <tfm>] [--package] <tree> [<name>]
+                                 make a consumer project that references the tree's EF6 provider; prints its folder.
+                                 It targets net10.0 unless --framework names another. With --package it references
+                                 the provider package in the tree's feed, from verify pack, in place of the project
+verify efcore-consumer [--framework <tfm>] [--package] <tree> [<name>]
+                                 the same, for the tree's EF Core provider
 verify pack <tree>               pack the tree's packages in Release into <tree>/feed; prints the feed, then each package
 verify package-consumer <tree> <template> [<name>]
                                  make a consumer from package-consumer-templates/<template>/, whose NuGet.config restores
@@ -158,10 +161,11 @@ report_probes() {
 
 cmd_doctor() {
     local failed=0 conn server host port entry
-    if dotnet --list-sdks 2>/dev/null | grep -qE '^(9|[1-9][0-9])\.'; then
-        echo "ok: a .NET SDK 9 or later"
+    # The consumers target net10.0.
+    if dotnet --list-sdks 2>/dev/null | grep -qE '^[1-9][0-9]\.'; then
+        echo "ok: a .NET SDK 10 or later"
     else
-        echo "fail: no .NET SDK 9 or later on PATH"; failed=1
+        echo "fail: no .NET SDK 10 or later on PATH"; failed=1
     fi
     echo "ok: repository $REPO_ROOT at $(git -C "$REPO_ROOT" rev-parse --short=12 HEAD)"
     conn=${SPECIFICATION_TEST_SQL_SERVER:-$DEFAULT_SQL}
@@ -226,26 +230,75 @@ cmd_library() {
 }
 
 cmd_consumer() {
-    [[ $# -eq 1 || $# -eq 2 ]] || die "usage: verify consumer <tree> [<name>]"
-    make_consumer consumer-template EntityFramework6 EF6 "$@"
+    make_consumer consumer consumer-template EntityFramework6 EF6 "$@"
 }
 
 cmd_efcore_consumer() {
-    [[ $# -eq 1 || $# -eq 2 ]] || die "usage: verify efcore-consumer <tree> [<name>]"
-    make_consumer efcore-consumer-template EntityFrameworkCore "EF Core" "$@"
+    make_consumer efcore-consumer efcore-consumer-template EntityFrameworkCore "EF Core" "$@"
 }
 
-# Makes the consumer consumers/<name> from the template folder $1, referencing the provider project src/<library>.$2 of
-# the tree $4, which errors call the $3 provider. The templates import OpenSpecification; for a tree from before #47,
-# whose library is Ardalis.Specification, the consumer's copies of them name Ardalis.Specification instead. The name $5 defaults to the tree's short sha. The template's Consumer.csproj.in
-# names the provider @PROVIDER@, and may name @SQLSERVER@, the version of Microsoft.EntityFrameworkCore.SqlServer in the
-# tree's Directory.Packages.props. @DEFINES@ holds ;DBSET_READS when the tree has #11's DbSet extensions, which the
+# Prints the version of Microsoft.EntityFrameworkCore in the ItemGroup of the Directory.Packages.props $1 whose
+# condition names the framework $2, or else the version of Microsoft.EntityFrameworkCore.SqlServer, the first one listed.
+# A consumer's SQL Server provider takes that version, so it matches the EF Core its provider builds with.
+sqlserver_version() {
+    awk -v fw="$2" '
+        /<ItemGroup/ { cond = index($0, "== '\''" fw "'\''") > 0 }
+        /<\/ItemGroup>/ { cond = 0 }
+        match($0, /Include="Microsoft\.EntityFrameworkCore(\.SqlServer)?" Version="[^"]+"/) {
+            v = substr($0, RSTART, RLENGTH); sub(/.*Version="/, "", v); sub(/"$/, "", v)
+            if (cond && $0 ~ /Include="Microsoft\.EntityFrameworkCore"/ && efcore == "") efcore = v
+            if ($0 ~ /\.SqlServer"/ && sqlserver == "") sqlserver = v
+        }
+        END { print (efcore != "" ? efcore : sqlserver) }
+    ' "$1" 2>/dev/null || true
+}
+
+# Writes $1/NuGet.config, whose restore reads the tree $2's feed from verify pack, then nuget.org, into $1's own packages/
+# folder, so a package packed again under the same version is never read from ~/.nuget/packages, and an unpublished one
+# never lands there.
+write_nuget_config() {
+    cat > "$1/NuGet.config" <<EOF
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <config>
+    <add key="globalPackagesFolder" value="packages" />
+  </config>
+  <packageSources>
+    <clear />
+    <add key="feed" value="$2/feed" />
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+  </packageSources>
+</configuration>
+EOF
+}
+
+# Makes the consumer consumers/<name> for the command $1 from the template folder $2, referencing the provider project
+# src/<library>.$3 of the tree, which errors call the $4 provider. The rest of the arguments are the command's: the
+# options --framework <tfm> and --package, the tree, and the name, which defaults to the tree's short sha. The templates
+# import OpenSpecification; for a tree from before #47, whose library is Ardalis.Specification, the consumer's copies of
+# them name Ardalis.Specification instead. The template's Consumer.csproj.in names the provider reference @PROVIDER@:
+# a ProjectReference to the provider project, or with --package a PackageReference to the provider package at the
+# project's <Version>, restored from the tree's feed through write_nuget_config's NuGet.config. @FRAMEWORK@ is the
+# consumer's framework, net10.0 by default. The template may name @SQLSERVER@, the version sqlserver_version gives for
+# that framework. @DEFINES@ holds ;DBSET_READS when the tree has #11's DbSet extensions, which the
 # consumer's DBSET_READS lines call, and ;PROJECTED_ASYNC_ENUMERABLE when IReadRepositoryBase<T> has #16's
 # AsAsyncEnumerable<TResult>, which its PROJECTED_ASYNC_ENUMERABLE lines call. For a tree with the DbSet extensions it
 # also copies the template's with-dbset-reads/ files. Every consumer also gets consumer-shared/'s files.
 make_consumer() {
-    local template=$SKILL_DIR/$1 suffix=$2 label=$3 tree library project name dir provider sqlserver defines= dbset_reads= old
-    shift 3
+    local command=$1 template=$SKILL_DIR/$2 suffix=$3 label=$4 framework=net10.0 package= tree library project name dir
+    local provider reference version sqlserver defines= dbset_reads= old
+    local usage="usage: verify $command [--framework <tfm>] [--package] <tree> [<name>]"
+    shift 4
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --framework) [[ $# -ge 2 ]] || die "$usage"; framework=$2; shift 2 ;;
+            --package) package=1; shift ;;
+            --*) die "$usage" ;;
+            *) break ;;
+        esac
+    done
+    [[ $# -eq 1 || $# -eq 2 ]] || die "$usage"
+    [[ $framework =~ ^net[0-9]+\.[0-9]+$ ]] || die "refused: the framework $framework must look like net10.0"
     # First, so its removal of day-old items can't take the tree this checks.
     ensure_scratch
     tree=$(item trees "$1")
@@ -255,7 +308,15 @@ make_consumer() {
     [[ $name =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "refused: the name $name must be letters, digits, dots, dashes or underscores"
     provider="$tree/src/$project/$project.csproj"
     [[ -f $provider ]] || die "$tree has no $label provider project"
-    sqlserver=$(sed -nE 's/.*<PackageVersion Include="Microsoft\.EntityFrameworkCore\.SqlServer" Version="([^"]+)".*/\1/p' "$tree/Directory.Packages.props" 2>/dev/null | head -1) || true
+    if [[ -n $package ]]; then
+        [[ -d $tree/feed ]] || die "$tree has no feed; run verify pack $tree first"
+        version=$(sed -nE 's/.*<Version>([^<]+)<\/Version>.*/\1/p' "$provider" | head -1)
+        [[ -n $version ]] || die "$provider names no <Version>"
+        reference="<PackageReference Include=\"$project\" Version=\"$version\" />"
+    else
+        reference="<ProjectReference Include=\"$provider\" />"
+    fi
+    sqlserver=$(sqlserver_version "$tree/Directory.Packages.props" "$framework")
     if grep -q @SQLSERVER@ "$template/Consumer.csproj.in" && [[ -z $sqlserver ]]; then
         die "$tree's Directory.Packages.props names no Microsoft.EntityFrameworkCore.SqlServer version"
     fi
@@ -271,8 +332,9 @@ make_consumer() {
     cp "$template"/*.cs "$SKILL_DIR"/consumer-shared/*.cs "$dir/"
     [[ -z $dbset_reads ]] || cp "$template"/with-dbset-reads/*.cs "$dir/"
     [[ $library == OpenSpecification ]] || sed -i 's/\bOpenSpecification\b/Ardalis.Specification/g' "$dir"/*.cs
-    sed -e "s|@PROVIDER@|$provider|" -e "s|@SQLSERVER@|$sqlserver|" -e "s|@DEFINES@|$defines|" \
-        "$template/Consumer.csproj.in" > "$dir/Consumer.csproj"
+    sed -e "s|@PROVIDER@|$reference|" -e "s|@FRAMEWORK@|$framework|" -e "s|@SQLSERVER@|$sqlserver|" \
+        -e "s|@DEFINES@|$defines|" "$template/Consumer.csproj.in" > "$dir/Consumer.csproj"
+    [[ -z $package ]] || write_nuget_config "$dir" "$tree"
     printf 'tree %s\n' "$(head -1 "$tree/$MARKER")" > "$dir/$MARKER"
     printf '%s\n' "$dir"
 }
@@ -295,8 +357,7 @@ cmd_pack() {
 }
 
 # Makes consumers/<name>, which defaults to the template's name, from package-consumer-templates/<template>/, whose
-# Consumer.csproj references packages, and adds a NuGet.config. Its restore reads the tree's feed from verify pack, then nuget.org, into the consumer's own packages/ folder, so a package
-# packed again under the same version is never read from ~/.nuget/packages, and an unpublished one never lands there.
+# Consumer.csproj references packages, and adds write_nuget_config's NuGet.config.
 cmd_package_consumer() {
     [[ $# -eq 2 || $# -eq 3 ]] || die "usage: verify package-consumer <tree> <template> [<name>]"
     local tree template name=${3:-$2} dir old
@@ -314,19 +375,7 @@ cmd_package_consumer() {
     fi
     mkdir "$dir"
     cp -r "$template/." "$dir/"
-    cat > "$dir/NuGet.config" <<EOF
-<?xml version="1.0" encoding="utf-8"?>
-<configuration>
-  <config>
-    <add key="globalPackagesFolder" value="packages" />
-  </config>
-  <packageSources>
-    <clear />
-    <add key="feed" value="$tree/feed" />
-    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
-  </packageSources>
-</configuration>
-EOF
+    write_nuget_config "$dir" "$tree"
     printf 'tree %s\n' "$(head -1 "$tree/$MARKER")" > "$dir/$MARKER"
     printf '%s\n' "$dir"
 }

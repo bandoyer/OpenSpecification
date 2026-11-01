@@ -44,7 +44,7 @@ Preconditions:
 
   ```bash
   L=$(verify library "$T")
-  sed -n "/name=\"P:$L.Specification\`[12].Query\"/,/<\/member>/p" "$C/bin/Debug/net9.0/$L.xml"
+  sed -n "/name=\"P:$L.Specification\`[12].Query\"/,/<\/member>/p" "$C/bin/Debug/net10.0/$L.xml"
   ```
 
   Since #8, each of the two entries holds a `<summary>`. Before #8, each holds only `<inheritdoc/>`, which has no interface member left to inherit from once `Query` leaves the interfaces.

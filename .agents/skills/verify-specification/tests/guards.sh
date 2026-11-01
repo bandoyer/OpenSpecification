@@ -86,7 +86,35 @@ else
     fail "package-consumer made no NuGet.config naming $TREE/feed in '$PACKAGES'"
 fi
 [[ -z $PACKAGES ]] || "$V" cleanup "$PACKAGES" >/dev/null
+refuses "efcore-consumer --package with a name that climbs out" efcore-consumer --package "$TREE" "../../$(basename "$ESCAPE")"
+[[ ! -e $ESCAPE ]] || fail "efcore-consumer --package wrote $ESCAPE"
+refuses "consumer --package from a decoy tree" consumer --package @DECOY@ decoy
+refuses "consumer --framework with a path for a framework" consumer --framework "../../@DECOYNAME@" "$TREE" decoy-framework
+# --package names the provider package at its project's <Version>, and --framework sets the framework and the SQL Server
+# provider's version, which is the EF Core version Directory.Packages.props gives that framework.
+L=$("$V" library "$TREE")
+PROVIDER_VERSION=$(sed -nE 's/.*<Version>([^<]+)<\/Version>.*/\1/p' "$TREE/src/$L.EntityFrameworkCore/$L.EntityFrameworkCore.csproj" | head -1)
+NET9_EFCORE=$(sed -n "/== 'net9.0'/,/<\/ItemGroup>/p" "$TREE/Directory.Packages.props" \
+    | sed -nE 's/.*Include="Microsoft\.EntityFrameworkCore" Version="([^"]+)".*/\1/p' | head -1)
+OPTIONS=$("$V" efcore-consumer --package --framework net9.0 "$TREE" guards-options)
+if [[ -n $OPTIONS && -n $PROVIDER_VERSION && -n $NET9_EFCORE ]] \
+    && grep -qF "<TargetFramework>net9.0</TargetFramework>" "$OPTIONS/Consumer.csproj" \
+    && grep -qF "<PackageReference Include=\"$L.EntityFrameworkCore\" Version=\"$PROVIDER_VERSION\" />" "$OPTIONS/Consumer.csproj" \
+    && grep -qF "Include=\"Microsoft.EntityFrameworkCore.SqlServer\" Version=\"$NET9_EFCORE\"" "$OPTIONS/Consumer.csproj" \
+    && ! grep -q '<ProjectReference\|@[A-Z]*@' "$OPTIONS/Consumer.csproj" \
+    && grep -qF "value=\"$TREE/feed\"" "$OPTIONS/NuGet.config"; then
+    pass "efcore-consumer --package --framework net9.0 references $L.EntityFrameworkCore $PROVIDER_VERSION from the feed, with SQL Server provider $NET9_EFCORE"
+else
+    fail "efcore-consumer --package --framework net9.0 made '$OPTIONS', whose project is: $(tr '\n' ' ' < "$OPTIONS/Consumer.csproj" 2>/dev/null)"
+fi
+[[ -z $OPTIONS ]] || "$V" cleanup "$OPTIONS" >/dev/null
 rmdir "$TREE/feed"
+out=$("$V" consumer --package "$TREE" guards-no-feed 2>&1) && status=0 || status=$?
+if [[ $status -ne 0 && $out == *"has no feed"* && ! -e $SCRATCH/consumers/guards-no-feed ]]; then
+    pass "consumer --package from a tree without a feed stops before it writes"
+else
+    fail "consumer --package without a feed: exit $status, output: ${out//$'\n'/ | }"
+fi
 # A commit can hold a log's path as a link, and git archive keeps it in the tree. pack and warnings must unlink it rather
 # than write through it. A stand-in dotnet prints one line and succeeds, so no real build runs.
 STANDIN=$(mktemp -d /tmp/verify-specification-standin.XXXXXX)
@@ -131,8 +159,11 @@ else
 fi
 EFCORE=$("$V" efcore-consumer "$TREE" guards-efcore)
 if [[ -n $EFCORE && -f $EFCORE/Consumer.csproj ]] && ! grep -q '@[A-Z]*@' "$EFCORE/Consumer.csproj" \
-    && grep -q 'Include="Microsoft.EntityFrameworkCore.SqlServer" Version="[0-9]' "$EFCORE/Consumer.csproj"; then
-    pass "efcore-consumer makes $EFCORE, with the tree's SQL Server provider version"
+    && grep -q 'Include="Microsoft.EntityFrameworkCore.SqlServer" Version="[0-9]' "$EFCORE/Consumer.csproj" \
+    && grep -qF '<TargetFramework>net10.0</TargetFramework>' "$EFCORE/Consumer.csproj" \
+    && grep -q '<ProjectReference Include="[^"]*EntityFrameworkCore.csproj" />' "$EFCORE/Consumer.csproj" \
+    && [[ ! -e $EFCORE/NuGet.config ]]; then
+    pass "efcore-consumer makes $EFCORE for net10.0, referencing the provider project, with the tree's SQL Server provider version"
 else
     fail "efcore-consumer made no project from $TREE, or left a placeholder in '$EFCORE/Consumer.csproj'"
 fi
