@@ -1,4 +1,5 @@
 ﻿using System.Data.Entity;
+using OpenSpecification.Paging;
 
 namespace OpenSpecification.EntityFramework6;
 
@@ -175,6 +176,58 @@ public abstract class RepositoryBase<T> : IRepositoryBase<T> where T : class
         return await DbContext.Set<T>().AnyAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// Counts the entities that match the <paramref name="specification"/>'s criteria, then returns the page of them that
+    /// <paramref name="filter"/> asks for, with the page's details. An out-of-range page or page size is clamped to the
+    /// pages that exist, as <see cref="Pagination.Create"/> says.
+    /// <para>
+    /// The count evaluates the criteria only, as CountAsync does. The page applies the rest of the specification too,
+    /// except its PostProcessingAction, which a paged query ignores so the page agrees with the count.
+    /// </para>
+    /// </summary>
+    /// <param name="specification">The encapsulated query logic. It can't have Skip or Take, since the filter sets the page.</param>
+    /// <param name="filter">The page and page size the caller asks for.</param>
+    /// <param name="cancellationToken">A <see cref="CancellationToken" /> to observe while waiting for the task to complete.</param>
+    /// <returns>
+    /// A task that represents the asynchronous operation. The task result contains the page and its details.
+    /// </returns>
+    /// <exception cref="ArgumentNullException">If <paramref name="specification"/> or <paramref name="filter"/> is null.</exception>
+    /// <exception cref="ArgumentException">If <paramref name="specification"/> has Skip or Take.</exception>
+    /// <remarks>The default page size and the page size limit are <see cref="PaginationSettings"/>'s.</remarks>
+    public virtual async Task<PagedResult<T>> PagedListAsync(ISpecification<T> specification, IPagingFilter filter, CancellationToken cancellationToken = default)
+    {
+        specification.EnsurePageable(filter, PaginationSettings);
+        return await PagedQuery.ToPagedResultAsync(ApplySpecification(specification, true), ApplySpecification(specification), filter, PaginationSettings, cancellationToken);
+    }
+
+    /// <summary>
+    /// Counts the results that match the <paramref name="specification"/>'s criteria, then returns the page of its
+    /// projections that <paramref name="filter"/> asks for, with the page's details. An out-of-range page or page size
+    /// is clamped to the pages that exist, as <see cref="Pagination.Create"/> says.
+    /// <para>
+    /// The count evaluates the criteria only, as CountAsync does, and counts one result per entity for a Select. EF6
+    /// can't page a SelectMany specification, since it can't Skip rows a specification can't order. The page applies the rest of the
+    /// specification too, except its PostProcessingAction, which a paged query ignores so the page agrees with the
+    /// count.
+    /// </para>
+    /// </summary>
+    /// <typeparam name="TResult">The type of the value returned by the projection.</typeparam>
+    /// <param name="specification">The encapsulated query logic. It can't have Skip or Take, since the filter sets the page.</param>
+    /// <param name="filter">The page and page size the caller asks for.</param>
+    /// <param name="cancellationToken">A <see cref="CancellationToken" /> to observe while waiting for the task to complete.</param>
+    /// <returns>
+    /// A task that represents the asynchronous operation. The task result contains the page and its details.
+    /// </returns>
+    /// <exception cref="ArgumentNullException">If <paramref name="specification"/> or <paramref name="filter"/> is null.</exception>
+    /// <exception cref="ArgumentException">If <paramref name="specification"/> has Skip or Take.</exception>
+    /// <remarks>The default page size and the page size limit are <see cref="PaginationSettings"/>'s.</remarks>
+    /// <exception cref="NotSupportedException">If <paramref name="specification"/> has a SelectMany, which EF6 can\'t page.</exception>
+    public virtual async Task<PagedResult<TResult>> PagedListAsync<TResult>(ISpecification<T, TResult> specification, IPagingFilter filter, CancellationToken cancellationToken = default)
+    {
+        specification.EnsurePageable(filter, PaginationSettings);
+        return await PagedQuery.ToPagedResultAsync(ApplySpecification(specification, true), ApplySpecification(specification), specification, filter, PaginationSettings, cancellationToken);
+    }
+
 #if NET8_0_OR_GREATER
     /// <inheritdoc/>
     public virtual IAsyncEnumerable<T> AsAsyncEnumerable(ISpecification<T> specification)
@@ -188,6 +241,12 @@ public abstract class RepositoryBase<T> : IRepositoryBase<T> where T : class
         throw new NotImplementedException();
     }
 #endif
+
+    /// <summary>
+    /// Gets the default page size and the page size limit that PagedListAsync uses. Override it to give this
+    /// repository its own. The default is <see cref="PaginationSettings.Default"/>.
+    /// </summary>
+    protected virtual PaginationSettings PaginationSettings => PaginationSettings.Default;
 
     /// <summary>
     /// Filters the entities  of <typeparamref name="T"/>, to those that match the encapsulated query logic of the

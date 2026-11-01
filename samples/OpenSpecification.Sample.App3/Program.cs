@@ -11,7 +11,7 @@ using Microsoft.EntityFrameworkCore;
 // In this sample we demonstrate how to do that, and some other more advanced features.
 // - Defined custom RepositoryBase implementation (also added an additional evaluator)
 // - Defined separate IRepository and IReadRepository interfaces. IRepository requires IAggregateRoot.
-// - Defined pagination constructs.
+// - Paged the responses with the library's paging types, from OpenSpecification.Paging.
 // - We're utilizing Automapper projections in our repository and defined ProjectTo methods for the IReadRepository.
 //      These methods return paginated responses automatically.
 
@@ -31,7 +31,7 @@ app.UseSwaggerUI();
 app.UseHttpsRedirection();
 
 
-// Projecting directly to response DTOs. In addition the response is paginated and wrapped in PagedResponse<T>.
+// Projecting directly to response DTOs. In addition the response is paginated and wrapped in PagedResult<T>.
 app.MapGet("/customers", async (IReadRepository<Customer> repo,
                                 [AsParameters] CustomerFilter filter,
                                 CancellationToken cancellationToken) =>

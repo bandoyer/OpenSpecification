@@ -1,5 +1,6 @@
 ﻿using OpenSpecification.Sample.Domain.Filters;
 using OpenSpecification;
+using OpenSpecification.Paging;
 
 namespace OpenSpecification.Sample.App3;
 
@@ -20,5 +21,5 @@ public interface IReadRepository<T> where T : class
 
     Task<TResult?> ProjectToFirstOrDefaultAsync<TResult>(ISpecification<T> specification, CancellationToken cancellationToken);
     Task<List<TResult>> ProjectToListAsync<TResult>(ISpecification<T> specification, CancellationToken cancellationToken);
-    Task<PagedResponse<TResult>> ProjectToListAsync<TResult>(ISpecification<T> specification, BaseFilter filter, CancellationToken cancellationToken);
+    Task<PagedResult<TResult>> ProjectToListAsync<TResult>(ISpecification<T> specification, BaseFilter filter, CancellationToken cancellationToken);
 }

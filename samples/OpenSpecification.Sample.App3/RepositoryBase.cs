@@ -1,6 +1,7 @@
 ﻿using OpenSpecification.Sample.Domain.Filters;
 using OpenSpecification;
 using OpenSpecification.EntityFrameworkCore;
+using OpenSpecification.Paging;
 using AutoMapper;
 using AutoMapper.QueryableExtensions;
 using Microsoft.EntityFrameworkCore;
@@ -139,18 +140,20 @@ public abstract class RepositoryBase<T> : IReadRepository<T> where T : class
             .ToListAsync(cancellationToken);
     }
 
-    public async Task<PagedResponse<TResult>> ProjectToListAsync<TResult>(ISpecification<T> specification, BaseFilter filter, CancellationToken cancellationToken)
+    // The library's PagedListAsync pages a specification's own projection. This pages an AutoMapper projection, so it
+    // counts and pages by hand, with the library's paging types.
+    public async Task<PagedResult<TResult>> ProjectToListAsync<TResult>(ISpecification<T> specification, BaseFilter filter, CancellationToken cancellationToken)
     {
-        var count = await ApplySpecification(specification).CountAsync(cancellationToken);
-        var pagination = new Pagination(count, filter);
+        var count = await ApplySpecification(specification, true).CountAsync(cancellationToken);
+        var pagination = Pagination.Create(count, filter, PaginationSettings.Default);
 
         var data = await ApplySpecification(specification)
-            .Skip(pagination.Skip)
-            .Take(pagination.Take)
+            .Skip((pagination.Page - 1) * pagination.PageSize)
+            .Take(pagination.PageSize)
             .ProjectTo<TResult>(_configurationProvider)
             .ToListAsync(cancellationToken);
 
-        return new PagedResponse<TResult>(data, pagination);
+        return new PagedResult<TResult>(data, pagination);
     }
 
     protected virtual IQueryable<T> ApplySpecification(ISpecification<T> specification, bool evaluateCriteriaOnly = false)
