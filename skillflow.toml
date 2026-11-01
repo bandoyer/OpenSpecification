@@ -3,13 +3,15 @@
 checks = "local"
 # The same build and tests as upstream's ci.yml. The SQL Server is the spec-sql container from CONTRIBUTING.md's "Running
 # the tests". Runs share it and each test run resets the same databases, so the tests wait for AGENTS.md's lock. Then the
-# verify skill's helper tests, which a later edit to the helper would otherwise slip past.
+# package contents check, which packs that build, and the verify skill's helper tests, which a later edit to the helper
+# would otherwise slip past.
 suite = '''
 set -eu
 export SPECIFICATION_TEST_SQL_SERVER='Server=localhost,1433;User Id=sa;Password=P@ssW0rd!;TrustServerCertificate=True'
 echo "=== dotnet build ci.slnf --configuration Release"; dotnet build ci.slnf --configuration Release
 echo "=== dotnet test ci.slnf --framework net10.0"
 flock "$HOME/.cache/specification-spec-sql.lock" dotnet test ci.slnf --configuration Release --no-build --framework net10.0
+echo "=== tests/package-contents.sh"; tests/package-contents.sh
 for test in .agents/skills/verify-specification/tests/*.sh; do echo "=== $test"; "$test"; done
 '''
 

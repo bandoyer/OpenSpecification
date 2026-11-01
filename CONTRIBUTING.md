@@ -36,6 +36,8 @@ dotnet test ci.slnf --framework net10.0
 
 Only one test run at a time should use the server, because each run resets the same databases.
 
+After `dotnet build ci.slnf --configuration Release`, `tests/package-contents.sh` packs that build and checks that each package's `lib/` folders hold only the assembly and its XML docs.
+
 ## Ask before adding a pull request
 
 You can just add a pull request out of the blue if you want, but it's much better etitquette (and more likely to be accepted) if you open a new issue or comment in an existing issue stating you'd like to make a pull request.

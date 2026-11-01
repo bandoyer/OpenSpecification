@@ -4,6 +4,8 @@
     <TargetFrameworks>net8.0;net9.0;net10.0;net472;</TargetFrameworks>
     <Nullable>enable</Nullable>
     <OutputType>Library</OutputType>
+    <!-- EntityFramework's build/net6.0 props turn this on. A library has no use for a runtimeconfig.json. -->
+    <GenerateRuntimeConfigurationFiles>false</GenerateRuntimeConfigurationFiles>
     
     <AssemblyName>OpenSpecification.EntityFramework6</AssemblyName>
     <PackageId>OpenSpecification.EntityFramework6</PackageId>
