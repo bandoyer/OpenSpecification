@@ -62,6 +62,7 @@ These methods ignore it, on the repositories and on a `DbSet<T>`:
 - `FirstOrDefaultAsync`
 - `SingleOrDefaultAsync`
 - `AsAsyncEnumerable`, which only the EF Core provider implements. The EF6 provider's `RepositoryBase<T>` throws `NotImplementedException` from it.
+- `PagedListAsync` on the repositories, and `ToPagedListAsync` on a `DbSet<T>`, so the page agrees with its count. See [How to get a page of results](../usage/use-paged-results.md).
 
 `CountAsync` and `AnyAsync` evaluate only the specification's criteria, such as `Where` and `Search`, and run in SQL. They skip `Include`, `OrderBy`, `Skip` and `Take`, and they load no rows for `PostProcessingAction` to run on. So a filter in `PostProcessingAction` makes `ListAsync` and `CountAsync` disagree. `ListAsync` applies `Skip` and `Take` in SQL, and then the delegate removes rows from the page it loaded. `CountAsync` still counts the removed rows, so a page count built from it is too high, as [issue #18](https://github.com/bandoyer/OpenSpecification/issues/18) found when paging.
 

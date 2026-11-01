@@ -1,6 +1,8 @@
-﻿namespace OpenSpecification.Sample.Domain.Filters;
+﻿using OpenSpecification.Paging;
 
-public record BaseFilter
+namespace OpenSpecification.Sample.Domain.Filters;
+
+public record BaseFilter : IPagingFilter
 {
     public int? Page { get; set; }
     public int? PageSize { get; set; }
