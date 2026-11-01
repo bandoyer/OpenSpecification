@@ -5,7 +5,7 @@ Since #59, a developer gets one page of a specification's rows, with the page's 
 ## Sub-features
 
 - `page`: page 2 of 25 matches, ten to a page, through EF Core's `RepositoryBase<T>` and `ContextFactoryRepositoryBaseOfT`, EF6's `RepositoryBase<T>`, and each provider's `DbSet`.
-- `projected-page`: the `ISpecification<T, TResult>` overloads with a `Select`, and with a `SelectMany` whose total counts the flattened rows.
+- `projected-page`: the `ISpecification<T, TResult>` overloads with a `Select`, and with a `SelectMany`, whose total counts the flattened rows in EF Core, and which EF6 refuses.
 - `clamping`: a page past the last, a page of 0, -1 or null, a page size of 0, null or past the limit, and a specification nothing matches.
 - `settings`: `PaginationSettings` passed to `ToPagedListAsync`, a repository subclass that overrides `PaginationSettings`, and the settings' argument checks.
 - `count-and-page-sql`: the count and page queries each call sends, for a specification with an `Include`, an `OrderBy` and a `PostProcessingAction`, and the page's rows without the post-processing.
@@ -36,14 +36,15 @@ Preconditions:
   verify run "$C"
   ```
 
-- **EF6 driver.** The same with `verify consumer` and `"$S"/ef6/*.cs`, and no Newtonsoft.Json line. Its labels are the EF Core driver's, less the `factory-` lines and `json`.
+- **EF6 driver.** The same with `verify consumer` and `"$S"/ef6/*.cs`, and no Newtonsoft.Json line. Its labels are the EF Core driver's, less the `factory-` lines and `json`, plus `repository-selectmany-first`.
 
   Each driver prints one `label: result` line per call. A page reads `[<items>] (<n> items); Page <p>, PageSize <s>, TotalItems <t>, TotalPages <n>, HasPrevious <b>, HasNext <b>`. An exception reads `<type> (parameter <name>): <message>`. A line run with SQL is followed by `  sql commands: <n>`, then one `  sql: <text>` line per command, in the order sent. The seed is 25 countries named `Match 01` to `Match 25`, each with two cities, among five named `Other 1` to `Other 5`, inserted out of name order. Since #59 the drivers print:
 
   | Labels | Result |
   |---|---|
   | `*-page-2`, `*-select-page-2` | `Match 11` to `Match 20`; `Page 2, PageSize 10, TotalItems 25, TotalPages 3, HasPrevious true, HasNext true` |
-  | `*-selectmany-last` | `(2 items)`; `Page 5, PageSize 12, TotalItems 50, TotalPages 5, HasPrevious true, HasNext false` |
+  | `*-selectmany-last`, EF Core | `(2 items)`; `Page 5, PageSize 12, TotalItems 50, TotalPages 5, HasPrevious true, HasNext false` |
+  | `*-selectmany-*`, EF6 | `NotSupportedException` with a message that names SelectMany and says to use a Select, and `sql commands: 0` |
   | `clamp-page-99` | `Match 21` to `Match 25`; `Page 3`, `HasNext false` |
   | `clamp-page-0`, `clamp-page-minus-1`, `clamp-page-null` | `Match 01` to `Match 10`; `Page 1`, `HasPrevious false` |
   | `clamp-size-0`, `clamp-size-null` | `PageSize 10`, `TotalPages 3` |
@@ -87,6 +88,6 @@ Preconditions:
 
 - Swap the template's files out before the first build. A consumer that holds both the template's `Program.cs` and the driver has two files of top-level statements and fails with CS8802.
 - Each driver uses a database of its own, `VerifySpecificationPagedEFCore` or `VerifySpecificationPagedEF6`, and drops it at the end. A driver killed midway leaves it behind, and its next run drops it first.
-- EF6 refuses `Skip` on input it can't see as sorted, with a `NotSupportedException` that names Skip. A `*-selectmany-*` line that shows one is a finding about the EF6 provider, not about the driver.
+- EF6 refuses `Skip` on input it can't see as sorted, and a specification can't order the rows a `SelectMany` flattens, so EF6's paged methods refuse a `SelectMany` specification before any query. An EF6 `*-selectmany-*` line whose `NotSupportedException` names Skip, or that shows a SQL command, means the provider sent a query before refusing.
 - `verify build` prints the errors on stderr and the rest on stdout, so save both with `2>&1`.
 - The drivers and the name-clash files import `OpenSpecification.Paging`, which exists only since #59. They don't build against `$B`, except `OwnPaging.cs` and `UsesBoth.cs`.

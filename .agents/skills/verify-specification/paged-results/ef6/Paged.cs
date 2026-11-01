@@ -3,7 +3,7 @@
 // A label that shows SQL prints each command the call sent, in order, on lines of their own that start "  sql: ". The
 // recipe in features/paged-results.md copies this folder into an EF6 consumer in place of the template's files, and
 // `verify run` runs it. The output holds no ids or paths, and its labels are the EF Core driver's, less the
-// context-factory repository's and the JSON round trip.
+// context-factory repository's and the JSON round trip, plus repository-selectmany-first.
 using System.Data.Common;
 using System.Data.Entity;
 using System.Data.Entity.Infrastructure.Interception;
@@ -76,9 +76,10 @@ static class Paged
 
         await Print("repository-select-page-2", async () => Show(await repository.PagedListAsync(new MatchNames(), page2)));
         await Print("dbset-select-page-2", async () => Show(await db.Countries.ToPagedListAsync(new MatchNames(), page2)));
-        // 50 cities, 12 to a page: five pages, and the last holds two.
-        await Print("repository-selectmany-last", async () => Show(await repository.PagedListAsync(new MatchCities(), new PagingFilter { Page = 5, PageSize = 12 }), sortItems: true));
-        await Print("dbset-selectmany-last", async () => Show(await db.Countries.ToPagedListAsync(new MatchCities(), new PagingFilter { Page = 5, PageSize = 12 }), sortItems: true));
+        // EF6 refuses a SelectMany specification on every page, before any query.
+        await Print("repository-selectmany-first", async () => Show(await repository.PagedListAsync(new MatchCities(), new PagingFilter { Page = 1, PageSize = 12 })), showSql: true);
+        await Print("repository-selectmany-last", async () => Show(await repository.PagedListAsync(new MatchCities(), new PagingFilter { Page = 5, PageSize = 12 })), showSql: true);
+        await Print("dbset-selectmany-last", async () => Show(await db.Countries.ToPagedListAsync(new MatchCities(), new PagingFilter { Page = 5, PageSize = 12 })), showSql: true);
 
         await Print("clamp-page-99", async () => Show(await repository.PagedListAsync(new Matches(), new PagingFilter { Page = 99, PageSize = 10 })));
         await Print("clamp-page-0", async () => Show(await repository.PagedListAsync(new Matches(), new PagingFilter { Page = 0, PageSize = 10 })));
