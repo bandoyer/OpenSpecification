@@ -31,7 +31,7 @@ To use a SQL Server you already run, set `SPECIFICATION_TEST_SQL_SERVER` to its 
 ```bash
 docker run -d --name spec-sql -e ACCEPT_EULA=Y -e 'MSSQL_SA_PASSWORD=P@ssW0rd!' -p 127.0.0.1:1433:1433 mcr.microsoft.com/mssql/server:2022-latest
 export SPECIFICATION_TEST_SQL_SERVER='Server=localhost,1433;User Id=sa;Password=P@ssW0rd!;TrustServerCertificate=True'
-dotnet test ci.slnf --framework net9.0
+dotnet test ci.slnf --framework net10.0
 ```
 
 Only one test run at a time should use the server, because each run resets the same databases.

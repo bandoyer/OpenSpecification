@@ -17,7 +17,7 @@ testtarget="ci.slnf"
 fi
 
 dotnet build $testtarget --configuration Release
-dotnet test $testtarget --configuration Release --no-build --no-restore --framework net9.0 --collect:"XPlat Code Coverage;Format=opencover"
+dotnet test $testtarget --configuration Release --no-build --no-restore --framework net10.0 --collect:"XPlat Code Coverage;Format=opencover"
 
 reportgenerator \
     -reports:tests/**/coverage.opencover.xml \
