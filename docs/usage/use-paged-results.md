@@ -20,7 +20,7 @@ They're in a namespace of their own so they don't clash with paging classes of y
 
 ## Through a repository
 
-Give the specification its criteria and an order. Paging without an `OrderBy` returns rows in whatever order the database picks, which can change from one page to the next.
+Give the specification its criteria and an order. Paging without an `OrderBy` returns rows in whatever order the database picks, which can change from one page to the next. On EF6, a page past the first fails without an order, since EF6 refuses `Skip` on rows that aren't sorted.
 
 ```csharp
 public class HeroesByNameSpec : Specification<Hero>
