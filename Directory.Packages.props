@@ -3,8 +3,9 @@
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
     <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
-    <!-- The tests, benchmarks and samples raise a transitive package to the version under Transitive Updates. The
-         packages under src/ don't, so their dependencies stay as their own references give them. -->
+    <!-- Outside src/, every PackageVersion in this file also pins that package where it arrives transitively, so a new
+         PackageVersion can change a test, benchmark or sample graph. Transitive Updates lists the packages here only for
+         that. The packages under src/ don't pin, so their dependencies stay as their own references give them. -->
     <CentralPackageTransitivePinningEnabled Condition=" !$([MSBuild]::MakeRelative($(MSBuildThisFileDirectory), $(MSBuildProjectDirectory)).StartsWith('src')) ">true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
 

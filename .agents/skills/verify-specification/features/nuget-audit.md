@@ -30,4 +30,4 @@ Preconditions:
 ## Gotchas
 
 - The audit reads nuget.org's vulnerability data when it restores, so a new advisory can turn a clean commit's report red the day it is published. Compare two commits on the same day.
-- An advisory that `NuGetAuditSuppress`, `NoWarn` or `NuGetAudit` set to false hides prints no line, though the package is still vulnerable. Before calling a project clean, grep the tree's `Directory.Packages.props`, `Directory.Build.props` files and the project's file for those three.
+- An advisory that `NuGetAuditSuppress`, `NoWarn`, `NuGetAudit` set to false, or `NuGetAuditMode` set to `direct` hides prints no line, though the package is still vulnerable. `direct` hides every transitive advisory, #61's included. Before calling a project clean, grep the tree's `Directory.Packages.props`, `Directory.Build.props` files and the project's file for those four.
