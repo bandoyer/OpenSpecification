@@ -1,12 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- verify consumer writes this as Consumer.csproj, pointing the ProjectReference at a tree's EF6 provider project.
-       For a tree whose DbSet extensions have #11's methods, it adds DBSET_READS to DefineConstants, so the lines that
-       call them build only against a tree that has them. It also adds PROJECTED_ASYNC_ENUMERABLE for a tree with #16's
-       AsAsyncEnumerable<TResult>, which no line of this consumer needs. -->
+  <!-- verify consumer writes this as Consumer.csproj, with a reference to a tree's EF6 provider: its project, or, with
+       the package option, its package in the tree's feed. The consumer targets net10.0 unless the framework option
+       names another. For a tree whose DbSet extensions have #11's methods, it adds DBSET_READS to DefineConstants, so
+       the lines that call them build only against a tree that has them. It also adds PROJECTED_ASYNC_ENUMERABLE for a
+       tree with #16's AsAsyncEnumerable<TResult>, which no line of this consumer needs. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>@FRAMEWORK@</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>13.0</LangVersion>
@@ -14,7 +15,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="@PROVIDER@" />
+    @PROVIDER@
   </ItemGroup>
 
 </Project>

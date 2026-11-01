@@ -8,7 +8,7 @@ A developer whose project has nullable reference types enabled gets compiler war
 - `nullable-optional-evaluator`: `WithSpecification(spec, evaluator: null)`, in both overloads, gives no warning.
 - `nullable-null-specification`: `null` as the specification to `ListAsync` or to either `WithSpecification` warns CS8625.
 - `nullable-id-type`: `GetByIdAsync<string?>` warns CS8714.
-- `provider-warnings`: the provider builds for net8.0, net9.0 and net472 with no warning.
+- `provider-warnings`: the provider builds for each framework it targets with no warning.
 - `test-project-warnings`: the EF6 test project, which has nullable enabled, builds with no warning.
 
 ## How to get to it (user POV)
@@ -30,6 +30,6 @@ Preconditions:
 
 ## Gotchas
 
-- The consumer targets net9.0 only, so its probes see the provider's net9.0 build. The provider's warnings for each framework come from `verify warnings`.
+- The consumer targets net10.0 only, so its probes see the provider's net10.0 build, or its net9.0 build for a tree from before #58. The provider's warnings for each framework come from `verify warnings`.
 - `verify build` also lists the provider's own warnings, since it builds the provider the consumer references. A warning under `trees/` is the library's, from the provider or the core library it references, and one under `consumers/` is the consumer's.
 - A probe's line number moves when its file changes. `verify build` reads the numbers from the file each time.
