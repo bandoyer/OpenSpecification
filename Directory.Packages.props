@@ -3,6 +3,9 @@
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
     <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
+    <!-- The tests, benchmarks and samples raise a transitive package to the version under Transitive Updates. The
+         packages under src/ don't, so their dependencies stay as their own references give them. -->
+    <CentralPackageTransitivePinningEnabled Condition=" !$([MSBuild]::MakeRelative($(MSBuildThisFileDirectory), $(MSBuildProjectDirectory)).StartsWith('src')) ">true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
 
   <ItemGroup Label="Package dependencies NET FX">
@@ -32,7 +35,7 @@
     <PackageVersion Include="BenchmarkDotNet" Version="0.15.2" />
     <PackageVersion Include="MartinCostello.SqlLocalDb" Version="4.0.0" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.14" />
-    <PackageVersion Include="Testcontainers.MsSql" Version="4.6.0" />
+    <PackageVersion Include="Testcontainers.MsSql" Version="4.16.0" />
     <PackageVersion Include="Polyfill" Version="8.8.0" />
     <PackageVersion Include="FluentAssertions" Version="[7.2.0]" />
     <PackageVersion Include="NSubstitute" Version="5.3.0" />
@@ -57,6 +60,8 @@
   </ItemGroup>
 
   <ItemGroup Label="Transitive Updates">
+    <!-- Microsoft.Data.SqlClient brings 8.0.1, 9.0.4 or 9.0.11, which GHSA-2fmv-rv2c-59x7 and GHSA-846f-f764-76mx name (#61). -->
+    <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.14" />
   </ItemGroup>
 
 </Project>
