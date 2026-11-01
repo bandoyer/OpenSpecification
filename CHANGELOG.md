@@ -8,6 +8,7 @@ The notes for versions up to 9.3.1 are in [ardalis/Specification's GitHub Releas
 
 - The packages have an icon: a funnel over a list, for a specification filtering a query. The docs site uses it as its favicon. [#53](https://github.com/bandoyer/OpenSpecification/issues/53)
 - The packages target .NET 10. `OpenSpecification`, `OpenSpecification.EntityFrameworkCore` and `OpenSpecification.EntityFramework6` each add a net10.0 build and keep every framework they had. The EF Core provider's net10.0 build depends on EF Core 10.0.14, so a project on .NET 10 gets EF Core 10. Its net9.0 and net8.0 builds still depend on EF Core 9.0.8 and 8.0.19. [#58](https://github.com/bandoyer/OpenSpecification/issues/58)
+- `OpenSpecification.EntityFramework6` no longer ships `OpenSpecification.EntityFramework6.runtimeconfig.json` in its net8.0, net9.0 and net10.0 folders. Each folder holds only the assembly and its XML docs, as the other packages' folders do. [#62](https://github.com/bandoyer/OpenSpecification/issues/62)
 
 ## 10.0.0 (2026-11-01)
 
