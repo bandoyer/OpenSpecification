@@ -1,10 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!-- `verify benchmark` writes this as Benchmark.csproj beside the caller's Program.cs. It points the ProjectReference
-       at a tree's EF6 provider, and takes BenchmarkDotNet's version from the tree's Directory.Packages.props. -->
+       at a tree's EF6 provider, takes BenchmarkDotNet's version from the tree's Directory.Packages.props, and targets
+       the helper's DEFAULT_FRAMEWORK, as the consumers do. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>@FRAMEWORK@</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>13.0</LangVersion>

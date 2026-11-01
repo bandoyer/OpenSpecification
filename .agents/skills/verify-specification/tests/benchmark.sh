@@ -27,11 +27,14 @@ echo '// The workload; the stand-in dotnet never builds it.' > "$WORKLOAD/Progra
 
 # `dotnet run ... --artifacts <folder>` copies $REPORT into the folder's results/ and $LOG into the folder, as
 # BenchmarkDotNet would write them, and exits 0. It exits 3 when the helper didn't set up the project beside it, for
-# net10.0, the framework the tests and consumers run on.
+# the helper's DEFAULT_FRAMEWORK, which the consumers also target.
+FRAMEWORK=$(sed -n 's/^DEFAULT_FRAMEWORK=//p' "$V")
+[[ -n $FRAMEWORK ]] || { echo "FAIL: $V has no DEFAULT_FRAMEWORK= line"; exit 1; }
+export FRAMEWORK
 cat > "$STANDIN/dotnet" <<'EOF'
 #!/usr/bin/env bash
 [[ -f Program.cs && -f Benchmark.csproj ]] && ! grep -q '@[A-Z]*@' Benchmark.csproj \
-    && grep -q '<TargetFramework>net10.0</TargetFramework>' Benchmark.csproj || exit 3
+    && grep -q "<TargetFramework>$FRAMEWORK</TargetFramework>" Benchmark.csproj || exit 3
 while [[ $# -gt 0 && $1 != --artifacts ]]; do shift; done
 artifacts=$2
 mkdir -p "$artifacts/results"

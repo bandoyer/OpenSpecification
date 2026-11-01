@@ -9,6 +9,9 @@ REPO_ROOT=$(git -C "$SKILL_DIR" rev-parse --show-toplevel)
 SCRATCH=${VERIFY_SPECIFICATION_SCRATCH:-/tmp/verify-specification-$(id -u)}
 MARKER=.verify-made
 LOCK="$HOME/.cache/specification-spec-sql.lock"
+# The framework every project this helper writes targets, the consumers' unless --framework names another, and the
+# benchmark's. tests/benchmark.sh reads it from this line.
+DEFAULT_FRAMEWORK=net10.0
 # CONTRIBUTING.md's spec-sql container, used when SPECIFICATION_TEST_SQL_SERVER is unset.
 DEFAULT_SQL='Server=localhost,1433;User Id=sa;Password=P@ssW0rd!;TrustServerCertificate=True'
 
@@ -24,7 +27,7 @@ verify tree <git ref>            export that commit of this repository into the 
 verify library <tree>            print the tree's library name: OpenSpecification, or Ardalis.Specification before #47
 verify consumer [--framework <tfm>] [--package] <tree> [<name>]
                                  make a consumer project that references the tree's EF6 provider; prints its folder.
-                                 It targets net10.0 unless --framework names another. With --package it references
+                                 It targets $DEFAULT_FRAMEWORK unless --framework names another. With --package it references
                                  the provider package in the tree's feed, from verify pack, in place of the project
 verify efcore-consumer [--framework <tfm>] [--package] <tree> [<name>]
                                  the same, for the tree's EF Core provider
@@ -161,7 +164,7 @@ report_probes() {
 
 cmd_doctor() {
     local failed=0 conn server host port entry
-    # The consumers target net10.0.
+    # The consumers and the benchmark target DEFAULT_FRAMEWORK, net10.0.
     if dotnet --list-sdks 2>/dev/null | grep -qE '^[1-9][0-9]\.'; then
         echo "ok: a .NET SDK 10 or later"
     else
@@ -279,13 +282,13 @@ EOF
 # them name Ardalis.Specification instead. The template's Consumer.csproj.in names the provider reference @PROVIDER@:
 # a ProjectReference to the provider project, or with --package a PackageReference to the provider package at the
 # project's <Version>, restored from the tree's feed through write_nuget_config's NuGet.config. @FRAMEWORK@ is the
-# consumer's framework, net10.0 by default. The template may name @SQLSERVER@, the version sqlserver_version gives for
-# that framework. @DEFINES@ holds ;DBSET_READS when the tree has #11's DbSet extensions, which the
+# consumer's framework, DEFAULT_FRAMEWORK unless --framework names another. The template may name @SQLSERVER@, the
+# version sqlserver_version gives for that framework. @DEFINES@ holds ;DBSET_READS when the tree has #11's DbSet extensions, which the
 # consumer's DBSET_READS lines call, and ;PROJECTED_ASYNC_ENUMERABLE when IReadRepositoryBase<T> has #16's
 # AsAsyncEnumerable<TResult>, which its PROJECTED_ASYNC_ENUMERABLE lines call. For a tree with the DbSet extensions it
 # also copies the template's with-dbset-reads/ files. Every consumer also gets consumer-shared/'s files.
 make_consumer() {
-    local command=$1 template=$SKILL_DIR/$2 suffix=$3 label=$4 framework=net10.0 package= tree library project name dir
+    local command=$1 template=$SKILL_DIR/$2 suffix=$3 label=$4 framework=$DEFAULT_FRAMEWORK package= tree library project name dir
     local provider reference version sqlserver defines= dbset_reads= old
     local usage="usage: verify $command [--framework <tfm>] [--package] <tree> [<name>]"
     shift 4
@@ -533,7 +536,8 @@ prepare_benchmark() {
     fi
     mkdir "$BENCH_DIR"
     cp "$folder/Program.cs" "$BENCH_DIR/"
-    sed -e "s|@PROVIDER@|$provider|" -e "s|@BENCHMARKDOTNET@|$version|" "$SKILL_DIR/benchmark-template/Benchmark.csproj.in" > "$BENCH_DIR/Benchmark.csproj"
+    sed -e "s|@PROVIDER@|$provider|" -e "s|@BENCHMARKDOTNET@|$version|" -e "s|@FRAMEWORK@|$DEFAULT_FRAMEWORK|" \
+        "$SKILL_DIR/benchmark-template/Benchmark.csproj.in" > "$BENCH_DIR/Benchmark.csproj"
     printf 'tree %s\n' "$(head -1 "$tree/$MARKER")" > "$BENCH_DIR/$MARKER"
 }
 
