@@ -98,8 +98,7 @@ public class TestFactory : IAsyncLifetime
         }
     }
 
-    private static MsSqlContainer CreateContainer() => new MsSqlBuilder()
-            .WithImage("mcr.microsoft.com/mssql/server:2022-latest")
+    private static MsSqlContainer CreateContainer() => new MsSqlBuilder("mcr.microsoft.com/mssql/server:2022-latest")
             .WithPassword("P@ssW0rd!")
             .Build();
 }
