@@ -49,7 +49,7 @@ Preconditions:
   verify build "$C"; verify run "$C"
   ```
 
-  It prints `rows: Albania, Austria` and `library: OpenSpecification 10.0.0.0`.
+  It prints `rows: Albania, Austria` and `library: OpenSpecification 10.1.0.0`.
 
 - **Side by side.** Make a package consumer from the template `package-consumer-templates/side-by-side/`, an app with a class library of its own in `Legacy/`:
 
@@ -58,10 +58,10 @@ Preconditions:
   verify build "$C"; verify run "$C"
   ```
 
-  `verify build` ends `build: exit 0`, with no CS0433 and no MSB3277 among its warnings. The run prints `legacy: Albania, Austria`, `open: Norway`, and the two assemblies, `Ardalis.Specification, Version=9.3.1.0` and `OpenSpecification, Version=10.0.0.0`, each with `Culture=neutral, PublicKeyToken=null`.
+  `verify build` ends `build: exit 0`, with no CS0433 and no MSB3277 among its warnings. The run prints `legacy: Albania, Austria`, `open: Norway`, and the two assemblies, `Ardalis.Specification, Version=9.3.1.0` and `OpenSpecification, Version=10.1.0.0`, each with `Culture=neutral, PublicKeyToken=null`.
 
 ## Gotchas
 
-- Each package consumer restores into its own `packages/` folder. A project restored with the default `~/.nuget/packages` would keep the first `OpenSpecification` 10.0.0 it saw there, so a later pack under the same version would never reach it, and an unpublished package would sit in the user's cache.
+- Each package consumer restores into its own `packages/` folder. A project restored with the default `~/.nuget/packages` would keep the first `OpenSpecification` 10.1.0 it saw there, so a later pack under the same version would never reach it, and an unpublished package would sit in the user's cache.
 - `verify run` takes the shared SQL Server lock, though these consumers use no database. It only waits on a test run.
 - The side-by-side app's `Compile Remove="Legacy/**"` keeps the app from compiling the library's files a second time, since the SDK globs every `.cs` file under the project's folder.
