@@ -36,7 +36,7 @@ Preconditions:
     | "\($fw) \(.key) \((.value.compile // {}) | keys | join(" "))"' "$C/obj/project.assets.json"
   ```
 
-  `verify build` ends `build: exit 0`, and `verify run` prints the same lines as the consumer built against the provider project. The `jq` lines name each package with the version the restore picked and the assembly it compiles against, such as `net10.0 OpenSpecification.EntityFrameworkCore/10.0.0 lib/net10.0/OpenSpecification.EntityFrameworkCore.dll` and `net10.0 Microsoft.EntityFrameworkCore/10.0.14 lib/net10.0/Microsoft.EntityFrameworkCore.dll`. `verify consumer --package` does the same for the EF6 provider, whose restore also picks `EntityFramework`.
+  `verify build` ends `build: exit 0`, and `verify run` prints the same lines as the consumer built against the provider project. The `jq` lines name each package with the version the restore picked and the assembly it compiles against, such as `net10.0 OpenSpecification.EntityFrameworkCore/10.1.0 lib/net10.0/OpenSpecification.EntityFrameworkCore.dll` and `net10.0 Microsoft.EntityFrameworkCore/10.0.14 lib/net10.0/Microsoft.EntityFrameworkCore.dll`. `verify consumer --package` does the same for the EF6 provider, whose restore also picks `EntityFramework`.
 
   For net9.0 or net8.0, pass that framework and another name. The restore picks the package's build for that framework and its EF Core. `verify run` needs that framework's runtime, so on a machine with only the .NET 10 and 9 runtimes, a net8.0 consumer stops after `verify build` and the `jq` lines.
 
