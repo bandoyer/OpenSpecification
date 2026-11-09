@@ -2,6 +2,18 @@
 
 Written 2026-11-09 by the chief thread on Dan's home machine, so Dan can continue on their work computer. This branch, `handoff/compiled-queries`, isn't meant to merge. Delete it once #17 has a decided design.
 
+## Update, later on 2026-11-09
+
+The question below is settled differently from how this file frames it. Dan asked for the design that's best for every user of the library, not the one that fits the work code. The current design is [proposal-combined.md](proposal-combined.md), revision 2. It merges the three designs, takes in Sol's and Muse's review findings, and recommends `QueryArg<T>` with shape variants.
+
+[spike/](spike/) is a throwaway engine that proves it on SQLite in memory: 19 correctness checks, and a benchmark where the compiled spec matches a hand-written `EF.CompileAsyncQuery`. Next on the home machine:
+
+- Run the spike's benchmark against SQL Server to settle the search timing. Change the connection in `spike/Model.cs`.
+- Read the second review round from Sol and Muse.
+- Dan decides on the API, then #17 is rewritten.
+
+The rest of this file is the original handoff, kept for its background.
+
 ## What the next session does
 
 Dan uses EF Core compiled queries a lot at work, and #17 asks OpenSpecification to support them. Three designs exist, and the choice between them depends on how Dan's work code uses compiled queries. Read Dan's work code with Dan, answer the questions under "What to find in the work code", then help Dan pick a design.
