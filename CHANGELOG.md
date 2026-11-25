@@ -2,6 +2,12 @@
 
 The notes for versions up to 9.3.1 are in [ardalis/Specification's GitHub Releases](https://github.com/ardalis/Specification/releases).
 
+## Unreleased
+
+### Other changes
+
+- Optional automatic `SaveChangesAsync` (Unit of Work support). Both providers' `RepositoryBase<T>` (`OpenSpecification.EntityFrameworkCore` and `OpenSpecification.EntityFramework6`) add `protected virtual bool AutoSaveChanges => true;`. Override it to return `false` in a repository subclass so `AddAsync`, `AddRangeAsync`, `UpdateAsync`, `UpdateRangeAsync`, `DeleteAsync`, and both `DeleteRangeAsync` overloads stage changes on `DbContext` without calling `SaveChangesAsync`, letting callers commit multiple writes atomically with a single `SaveChangesAsync` call. When `AutoSaveChanges` is `false`, `UpdateAsync`, `UpdateRangeAsync`, `DeleteAsync`, and both `DeleteRangeAsync` overloads return `0`. `IRepositoryBase<T>` and `ContextFactoryRepositoryBaseOfT<TEntity, TContext>` are unchanged. [#74](https://github.com/bandoyer/OpenSpecification/issues/74)
+
 ## 10.1.0 (2026-11-02)
 
 ### Other changes

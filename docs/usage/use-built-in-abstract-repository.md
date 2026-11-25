@@ -106,6 +106,34 @@ var totalItems = await customerRepo.CountAsync(spec, cancellationToken);
 var customers = await customerRepo.ListAsync(spec, cancellationToken);
 ```
 
+### Deferring `SaveChangesAsync` (Unit of Work)
+
+By default, every write method on `RepositoryBase<T>` (`AddAsync`, `AddRangeAsync`, `UpdateAsync`, `UpdateRangeAsync`, `DeleteAsync`, and both `DeleteRangeAsync` overloads) calls `SaveChangesAsync` immediately. To batch multiple writes across one or more repositories sharing a scoped `DbContext` into a single atomic Unit of Work, override `AutoSaveChanges` to return `false` in your repository subclass (in either the EF Core or EF6 provider):
+
+```csharp
+public class Repository<T> : RepositoryBase<T>, IRepository<T> where T : class
+{
+    public Repository(SampleDbContext dbContext) : base(dbContext)
+    {
+    }
+
+    protected override bool AutoSaveChanges => false;
+}
+```
+
+With `AutoSaveChanges` set to `false`, write methods stage changes on the shared `DbContext` without calling `SaveChangesAsync`: `AddAsync` and `AddRangeAsync` still return the entity or entities, while `UpdateAsync`, `UpdateRangeAsync`, `DeleteAsync`, and both `DeleteRangeAsync` overloads return `0` (since no state entries have been written to the database yet). Commit the Unit of Work with a single `SaveChangesAsync` call:
+
+```csharp
+await orderRepo.AddAsync(order, cancellationToken);
+await customerRepo.UpdateAsync(customer, cancellationToken);
+
+// Commits both writes atomically on the shared DbContext.
+// If any write fails, none of the staged changes are persisted.
+await orderRepo.SaveChangesAsync(cancellationToken);
+```
+
+`ContextFactoryRepositoryBaseOfT<TEntity, TContext>` does not have `AutoSaveChanges`, because each of its write methods creates and disposes its own `DbContext`.
+
 ## Resources
 
 An in-depth demo of a similar implementation of the Repository Pattern and `RepositoryBase<T>` can be found in the Repositories section of this [Pluralsight course](https://www.pluralsight.com/courses/domain-driven-design-fundamentals).
