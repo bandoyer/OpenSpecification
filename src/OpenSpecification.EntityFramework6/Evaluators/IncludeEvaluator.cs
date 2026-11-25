@@ -15,7 +15,7 @@ public class IncludeEvaluator : IEvaluator
         if (specification is Specification<T> spec)
         {
             if (spec.OneOrManyIncludeExpressions.IsEmpty) return query;
-            if (spec.OneOrManyIncludeExpressions.SingleOrDefault is { } includeExpression)
+            if (spec.OneOrManyIncludeExpressions.SingleOrDefault is { Type: IncludeTypeEnum.Include } includeExpression)
             {
                 return query.Include(GetPath(includeExpression.LambdaExpression));
             }

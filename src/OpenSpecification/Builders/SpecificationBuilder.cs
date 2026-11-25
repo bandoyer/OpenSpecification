@@ -69,8 +69,8 @@ internal class SpecificationBuilder<T, TResult> : SpecificationBuilder<T>,
 {
     public new Specification<T, TResult> Specification { get; }
 
-    public SpecificationBuilder(Specification<T, TResult> specification)
-        : base(specification)
+    public SpecificationBuilder(Specification<T, TResult> specification, bool isChainDiscarded = false)
+        : base(specification, isChainDiscarded)
     {
         Specification = specification;
     }
@@ -80,9 +80,11 @@ internal class SpecificationBuilder<T>
     : ICacheSpecificationBuilder<T>, IOrderedSpecificationBuilder<T>, ISpecificationBuilder<T>
 {
     public Specification<T> Specification { get; }
+    internal bool IsChainDiscarded { get; }
 
-    public SpecificationBuilder(Specification<T> specification)
+    public SpecificationBuilder(Specification<T> specification, bool isChainDiscarded = false)
     {
         Specification = specification;
+        IsChainDiscarded = isChainDiscarded;
     }
 }

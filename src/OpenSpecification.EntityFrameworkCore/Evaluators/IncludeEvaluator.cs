@@ -43,7 +43,7 @@ public class IncludeEvaluator : IEvaluator
         if (specification is Specification<T> spec)
         {
             if (spec.OneOrManyIncludeExpressions.IsEmpty) return query;
-            if (spec.OneOrManyIncludeExpressions.SingleOrDefault is { } includeExpression)
+            if (spec.OneOrManyIncludeExpressions.SingleOrDefault is { Type: IncludeTypeEnum.Include } includeExpression)
             {
                 var lambdaExpr = includeExpression.LambdaExpression;
                 var key = new CacheKey(typeof(T), lambdaExpr.ReturnType, null);
