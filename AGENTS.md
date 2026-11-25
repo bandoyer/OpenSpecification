@@ -8,6 +8,8 @@ Run the tests as CONTRIBUTING.md's "Running the tests" section shows, with `SPEC
 flock ~/.cache/specification-spec-sql.lock dotnet test ci.slnf --framework net10.0
 ```
 
+Or run `./tests/check.sh` for the full Release build, locked net10.0 suite, package check, and verify-skill tests, or `./tests/check.sh --filter <expr> [target...]` for filtered net10.0 tests on uncommitted work.
+
 ## Agent skills
 
 ### Issue tracker
