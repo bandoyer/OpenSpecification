@@ -1,120 +1,274 @@
 ---- MODULE BuilderChains ----
 \* Formal model of OpenSpecification's builder chain-discarding state machine:
-\*   - src/OpenSpecification/Specification.cs:38-40 (IsChainDiscarded, [ThreadStatic])
+\*   - src/OpenSpecification/Builders/SpecificationBuilder.cs (immutable IsChainDiscarded)
+\*   - src/OpenSpecification/Builders/IncludableSpecificationBuilder.cs (immutable IsChainDiscarded)
 \*   - src/OpenSpecification/Builders/Builder_Include.cs (Include / ThenInclude)
 \*   - src/OpenSpecification/Builders/Builder_Order.cs (OrderBy / OrderByDescending / ThenBy / ThenByDescending)
 \*   - src/OpenSpecification/Builders/Builder_Cache.cs (EnableCache / WithCacheKey)
+\*   - src/OpenSpecification/Specification.cs (Query factory; unused [Obsolete] static IsChainDiscarded)
 \*
-\* Sync commit: 52d8fd7df7b76fb5b51c0e1d018f51788b1e55cc
+\* Sync commit: 00bb2e9e9b65e9727493e440a23afef0db39a01b
 \*
-\* Each caller handle (Include/ThenInclude and OrderBy/ThenBy) has a ground-truth
-\* status ("none", "active", "discarded"). The C# implementation stores only one
-\* [ThreadStatic] boolean (Specification<T>.IsChainDiscarded) shared across all
-\* chains and specifications on the current thread.
+\* Each caller handle (primary Include handle, branched Include handle, primary
+\* OrderBy handle, branched OrderBy handle) has a ground-truth chain status
+\* ("none", "active", "discarded") and an immutable per-builder IsChainDiscarded
+\* boolean stored on that builder instance (not in [ThreadStatic]).
+\*
+\* Two independent handles on one specification behave identically to handles on
+\* separate Specification<T> instances, because no discard state is shared statically.
 
 EXTENDS Naturals
 
 VARIABLES
-    incState,       \* Ground truth of the Include handle: "none" | "active" | "discarded"
-    ordState,       \* Ground truth of the OrderBy handle: "none" | "active" | "discarded"
-    flag,           \* Current thread's Specification<T>.IsChainDiscarded
-    otherFlag,      \* Another thread's Specification<T>.IsChainDiscarded (for async thread hop)
+    incState,       \* Ground truth of primary Include handle: "none" | "active" | "discarded"
+    incFlag,        \* Primary IncludableSpecificationBuilder.IsChainDiscarded
+    incBranchState, \* Ground truth of branched Include handle (var b = inc.ThenInclude(...))
+    incBranchFlag,  \* Branched IncludableSpecificationBuilder.IsChainDiscarded
+    ordState,       \* Ground truth of primary OrderBy handle: "none" | "active" | "discarded"
+    ordFlag,        \* Primary SpecificationBuilder.IsChainDiscarded
+    ordBranchState, \* Ground truth of branched OrderBy handle (var b = ord.ThenBy(...))
+    ordBranchFlag,  \* Branched SpecificationBuilder.IsChainDiscarded
     orphanEmitted,  \* TRUE if ThenInclude/ThenBy was emitted when its own chain was discarded
     activeDropped   \* TRUE if ThenInclude(true)/ThenBy(true) was skipped while its own chain was active
 
-vars == <<incState, ordState, flag, otherFlag, orphanEmitted, activeDropped>>
+vars == <<incState, incFlag, incBranchState, incBranchFlag,
+          ordState, ordFlag, ordBranchState, ordBranchFlag,
+          orphanEmitted, activeDropped>>
 
 Init ==
     /\ incState = "none"
+    /\ incFlag = FALSE
+    /\ incBranchState = "none"
+    /\ incBranchFlag = FALSE
     /\ ordState = "none"
-    /\ flag = FALSE
-    /\ otherFlag = FALSE
+    /\ ordFlag = FALSE
+    /\ ordBranchState = "none"
+    /\ ordBranchFlag = FALSE
     /\ orphanEmitted = FALSE
     /\ activeDropped = FALSE
 
-\* Include(expr, condition: true) — Builder_Include.cs:102-109, 140-147
+\* Query.Include(expr, condition: true) — Builder_Include.cs:102-109, 139-146
+\* Allocates new IncludableSpecificationBuilder(spec, isChainDiscarded: false).
 IncludeTrue ==
     /\ incState' = "active"
-    /\ flag' = FALSE
-    /\ UNCHANGED <<ordState, otherFlag, orphanEmitted, activeDropped>>
+    /\ incFlag' = FALSE
+    /\ UNCHANGED <<incBranchState, incBranchFlag, ordState, ordFlag,
+                   ordBranchState, ordBranchFlag, orphanEmitted, activeDropped>>
 
-\* Include(expr, condition: false) — Builder_Include.cs:102-109, 140-147
+\* Query.Include(expr, condition: false) — Builder_Include.cs:102-109, 139-146
+\* Allocates new IncludableSpecificationBuilder(spec, isChainDiscarded: true).
 IncludeFalse ==
     /\ incState' = "discarded"
-    /\ flag' = TRUE
-    /\ UNCHANGED <<ordState, otherFlag, orphanEmitted, activeDropped>>
+    /\ incFlag' = TRUE
+    /\ UNCHANGED <<incBranchState, incBranchFlag, ordState, ordFlag,
+                   ordBranchState, ordBranchFlag, orphanEmitted, activeDropped>>
 
-\* ThenInclude(expr, condition: true) — Builder_Include.cs:184-195, 229-240, 276-287, 321-332
+\* Fluent handoff: ord.Include(expr, condition: true) — Builder_Include.cs:102-109, 139-146
+\* Always allocates a fresh IncludableSpecificationBuilder with !condition (ignores ordFlag).
+IncludeTrueFromOrder ==
+    /\ ordState \in {"active", "discarded"}
+    /\ incState' = "active"
+    /\ incFlag' = FALSE
+    /\ UNCHANGED <<incBranchState, incBranchFlag, ordState, ordFlag,
+                   ordBranchState, ordBranchFlag, orphanEmitted, activeDropped>>
+
+\* Fluent handoff: ord.Include(expr, condition: false) — Builder_Include.cs:102-109, 139-146
+IncludeFalseFromOrder ==
+    /\ ordState \in {"active", "discarded"}
+    /\ incState' = "discarded"
+    /\ incFlag' = TRUE
+    /\ UNCHANGED <<incBranchState, incBranchFlag, ordState, ordFlag,
+                   ordBranchState, ordBranchFlag, orphanEmitted, activeDropped>>
+
+\* inc = inc.ThenInclude(expr, condition: true) — Builder_Include.cs:182-190, 224-232, 268-276, 310-318
 ThenIncludeTrue ==
     /\ incState \in {"active", "discarded"}
-    /\ LET emitted == ~flag IN
-       /\ flag' = IF emitted THEN flag ELSE TRUE
+    /\ LET isDiscarded == incFlag
+           emitted == ~isDiscarded IN
+       /\ incFlag' = isDiscarded
        /\ orphanEmitted' = (orphanEmitted \/ (incState = "discarded" /\ emitted))
        /\ activeDropped' = (activeDropped \/ (incState = "active" /\ ~emitted))
-    /\ UNCHANGED <<incState, ordState, otherFlag>>
+    /\ UNCHANGED <<incState, incBranchState, incBranchFlag,
+                   ordState, ordFlag, ordBranchState, ordBranchFlag>>
 
-\* ThenInclude(expr, condition: false) — Builder_Include.cs:184-195, 229-240, 276-287, 321-332
+\* inc = inc.ThenInclude(expr, condition: false) — Builder_Include.cs:182-190, 224-232, 268-276, 310-318
 ThenIncludeFalse ==
     /\ incState \in {"active", "discarded"}
     /\ incState' = "discarded"
-    /\ flag' = TRUE
-    /\ UNCHANGED <<ordState, otherFlag, orphanEmitted, activeDropped>>
+    /\ incFlag' = TRUE
+    /\ UNCHANGED <<incBranchState, incBranchFlag, ordState, ordFlag,
+                   ordBranchState, ordBranchFlag, orphanEmitted, activeDropped>>
 
-\* OrderBy / OrderByDescending(expr, condition: true) — Builder_Order.cs:64-71, 133-140
+\* Branch from saved handle: incBranch = inc.ThenInclude(expr, condition: true)
+\* Allocates a new IncludableSpecificationBuilder; inc's immutable IsChainDiscarded is unchanged.
+BranchThenIncludeTrue ==
+    /\ incState \in {"active", "discarded"}
+    /\ LET isDiscarded == incFlag
+           emitted == ~isDiscarded IN
+       /\ incBranchState' = incState
+       /\ incBranchFlag' = isDiscarded
+       /\ orphanEmitted' = (orphanEmitted \/ (incState = "discarded" /\ emitted))
+       /\ activeDropped' = (activeDropped \/ (incState = "active" /\ ~emitted))
+    /\ UNCHANGED <<incState, incFlag, ordState, ordFlag, ordBranchState, ordBranchFlag>>
+
+\* Branch from saved handle: incBranch = inc.ThenInclude(expr, condition: false)
+\* Allocates a new discarded IncludableSpecificationBuilder; inc remains unchanged.
+BranchThenIncludeFalse ==
+    /\ incState \in {"active", "discarded"}
+    /\ incBranchState' = "discarded"
+    /\ incBranchFlag' = TRUE
+    /\ UNCHANGED <<incState, incFlag, ordState, ordFlag,
+                   ordBranchState, ordBranchFlag, orphanEmitted, activeDropped>>
+
+\* incBranch = incBranch.ThenInclude(expr, condition: true)
+ContinueIncBranchTrue ==
+    /\ incBranchState \in {"active", "discarded"}
+    /\ LET isDiscarded == incBranchFlag
+           emitted == ~isDiscarded IN
+       /\ incBranchFlag' = isDiscarded
+       /\ orphanEmitted' = (orphanEmitted \/ (incBranchState = "discarded" /\ emitted))
+       /\ activeDropped' = (activeDropped \/ (incBranchState = "active" /\ ~emitted))
+    /\ UNCHANGED <<incState, incFlag, incBranchState,
+                   ordState, ordFlag, ordBranchState, ordBranchFlag>>
+
+\* incBranch = incBranch.ThenInclude(expr, condition: false)
+ContinueIncBranchFalse ==
+    /\ incBranchState \in {"active", "discarded"}
+    /\ incBranchState' = "discarded"
+    /\ incBranchFlag' = TRUE
+    /\ UNCHANGED <<incState, incFlag, ordState, ordFlag,
+                   ordBranchState, ordBranchFlag, orphanEmitted, activeDropped>>
+
+\* Query.OrderBy / OrderByDescending(expr, condition: true) — Builder_Order.cs:227-234, 245-252
 OrderByTrue ==
     /\ ordState' = "active"
-    /\ flag' = FALSE
-    /\ UNCHANGED <<incState, otherFlag, orphanEmitted, activeDropped>>
+    /\ ordFlag' = FALSE
+    /\ UNCHANGED <<incState, incFlag, incBranchState, incBranchFlag,
+                   ordBranchState, ordBranchFlag, orphanEmitted, activeDropped>>
 
-\* OrderBy / OrderByDescending(expr, condition: false) — Builder_Order.cs:64-71, 133-140
+\* Query.OrderBy / OrderByDescending(expr, condition: false) — Builder_Order.cs:236, 254
 OrderByFalse ==
     /\ ordState' = "discarded"
-    /\ flag' = TRUE
-    /\ UNCHANGED <<incState, otherFlag, orphanEmitted, activeDropped>>
+    /\ ordFlag' = TRUE
+    /\ UNCHANGED <<incState, incFlag, incBranchState, incBranchFlag,
+                   ordBranchState, ordBranchFlag, orphanEmitted, activeDropped>>
 
-\* ThenBy / ThenByDescending(expr, condition: true) — Builder_Order.cs:202-212, 274-284
+\* Fluent handoff: inc.OrderBy(expr, condition: true) — Builder_Order.cs:227-234, 245-252
+\* Reuses existing builder only when IsChainDiscarded == false; otherwise allocates a fresh active builder.
+OrderByTrueFromInclude ==
+    /\ incState \in {"active", "discarded"}
+    /\ ordState' = "active"
+    /\ ordFlag' = IF ~incFlag THEN incFlag ELSE FALSE
+    /\ UNCHANGED <<incState, incFlag, incBranchState, incBranchFlag,
+                   ordBranchState, ordBranchFlag, orphanEmitted, activeDropped>>
+
+\* Fluent handoff: inc.OrderBy(expr, condition: false) — Builder_Order.cs:236, 254
+\* Allocates a fresh discarded SpecificationBuilder; inc's flag is unchanged.
+OrderByFalseFromInclude ==
+    /\ incState \in {"active", "discarded"}
+    /\ ordState' = "discarded"
+    /\ ordFlag' = TRUE
+    /\ UNCHANGED <<incState, incFlag, incBranchState, incBranchFlag,
+                   ordBranchState, ordBranchFlag, orphanEmitted, activeDropped>>
+
+\* ord = ord.ThenBy / ThenByDescending(expr, condition: true) — Builder_Order.cs:263-271, 280-288
 ThenByTrue ==
     /\ ordState \in {"active", "discarded"}
-    /\ LET emitted == ~flag IN
-       /\ flag' = IF emitted THEN flag ELSE TRUE
+    /\ LET isDiscarded == ordFlag
+           emitted == ~isDiscarded IN
+       /\ ordFlag' = ordFlag
        /\ orphanEmitted' = (orphanEmitted \/ (ordState = "discarded" /\ emitted))
        /\ activeDropped' = (activeDropped \/ (ordState = "active" /\ ~emitted))
-    /\ UNCHANGED <<incState, ordState, otherFlag>>
+    /\ UNCHANGED <<incState, incFlag, incBranchState, incBranchFlag,
+                   ordState, ordBranchState, ordBranchFlag>>
 
-\* ThenBy / ThenByDescending(expr, condition: false) — Builder_Order.cs:202-212, 274-284
+\* ord = ord.ThenBy / ThenByDescending(expr, condition: false) — Builder_Order.cs:263-271, 280-288
 ThenByFalse ==
     /\ ordState \in {"active", "discarded"}
     /\ ordState' = "discarded"
-    /\ flag' = TRUE
-    /\ UNCHANGED <<incState, otherFlag, orphanEmitted, activeDropped>>
+    /\ ordFlag' = IF ordFlag THEN ordFlag ELSE TRUE
+    /\ UNCHANGED <<incState, incFlag, incBranchState, incBranchFlag,
+                   ordBranchState, ordBranchFlag, orphanEmitted, activeDropped>>
 
-\* EnableCache / WithCacheKey(..., condition: true) — Builder_Cache.cs:76-87, 153-164
+\* Branch from saved handle: ordBranch = ord.ThenBy(expr, condition: true)
+\* Returns ord unchanged (immutable flag); ord remains untouched.
+BranchThenByTrue ==
+    /\ ordState \in {"active", "discarded"}
+    /\ LET isDiscarded == ordFlag
+           emitted == ~isDiscarded IN
+       /\ ordBranchState' = ordState
+       /\ ordBranchFlag' = ordFlag
+       /\ orphanEmitted' = (orphanEmitted \/ (ordState = "discarded" /\ emitted))
+       /\ activeDropped' = (activeDropped \/ (ordState = "active" /\ ~emitted))
+    /\ UNCHANGED <<incState, incFlag, incBranchState, incBranchFlag,
+                   ordState, ordFlag>>
+
+\* Branch from saved handle: ordBranch = ord.ThenBy(expr, condition: false)
+\* Allocates a new discarded SpecificationBuilder when ord is active; ord remains untouched.
+BranchThenByFalse ==
+    /\ ordState \in {"active", "discarded"}
+    /\ ordBranchState' = "discarded"
+    /\ ordBranchFlag' = IF ordFlag THEN ordFlag ELSE TRUE
+    /\ UNCHANGED <<incState, incFlag, incBranchState, incBranchFlag,
+                   ordState, ordFlag, orphanEmitted, activeDropped>>
+
+\* ordBranch = ordBranch.ThenBy(expr, condition: true)
+ContinueOrdBranchTrue ==
+    /\ ordBranchState \in {"active", "discarded"}
+    /\ LET isDiscarded == ordBranchFlag
+           emitted == ~isDiscarded IN
+       /\ ordBranchFlag' = ordBranchFlag
+       /\ orphanEmitted' = (orphanEmitted \/ (ordBranchState = "discarded" /\ emitted))
+       /\ activeDropped' = (activeDropped \/ (ordBranchState = "active" /\ ~emitted))
+    /\ UNCHANGED <<incState, incFlag, incBranchState, incBranchFlag,
+                   ordState, ordFlag, ordBranchState>>
+
+\* ordBranch = ordBranch.ThenBy(expr, condition: false)
+ContinueOrdBranchFalse ==
+    /\ ordBranchState \in {"active", "discarded"}
+    /\ ordBranchState' = "discarded"
+    /\ ordBranchFlag' = IF ordBranchFlag THEN ordBranchFlag ELSE TRUE
+    /\ UNCHANGED <<incState, incFlag, incBranchState, incBranchFlag,
+                   ordState, ordFlag, orphanEmitted, activeDropped>>
+
+\* EnableCache / WithCacheKey(..., condition: true | false) — Builder_Cache.cs:76-87, 152-163
+\* Returns (SpecificationBuilder<T>)builder without reading or writing any IsChainDiscarded flag.
+\* Chaining OrderBy/Include onto its return value therefore matches OrderBy*FromInclude / Include*FromOrder.
 EnableCacheTrue ==
-    /\ flag' = FALSE
-    /\ UNCHANGED <<incState, ordState, otherFlag, orphanEmitted, activeDropped>>
+    UNCHANGED vars
 
-\* EnableCache / WithCacheKey(..., condition: false) — Builder_Cache.cs:76-87, 153-164
 EnableCacheFalse ==
-    /\ flag' = TRUE
-    /\ UNCHANGED <<incState, ordState, otherFlag, orphanEmitted, activeDropped>>
+    UNCHANGED vars
 
-\* Async continuation resumes on another thread with its own [ThreadStatic] IsChainDiscarded
+\* Async continuation resumes on another thread.
+\* Per-builder IsChainDiscarded lives on the heap builder instance, not [ThreadStatic],
+\* so thread hops leave every handle's flag unchanged.
 SwitchThread ==
-    /\ flag' = otherFlag
-    /\ otherFlag' = flag
-    /\ UNCHANGED <<incState, ordState, orphanEmitted, activeDropped>>
+    UNCHANGED vars
 
-\* Full model: any legal sequence of public builder calls (including saved handles,
-\* EnableCache/WithCacheKey, and async thread hops).
+\* Full model: any legal sequence of public builder calls (saved handles, fluent handoffs,
+\* branching from saved handles, EnableCache/WithCacheKey, and async thread hops).
 Next ==
     \/ IncludeTrue
     \/ IncludeFalse
+    \/ IncludeTrueFromOrder
+    \/ IncludeFalseFromOrder
     \/ ThenIncludeTrue
     \/ ThenIncludeFalse
+    \/ BranchThenIncludeTrue
+    \/ BranchThenIncludeFalse
+    \/ ContinueIncBranchTrue
+    \/ ContinueIncBranchFalse
     \/ OrderByTrue
     \/ OrderByFalse
+    \/ OrderByTrueFromInclude
+    \/ OrderByFalseFromInclude
     \/ ThenByTrue
     \/ ThenByFalse
+    \/ BranchThenByTrue
+    \/ BranchThenByFalse
+    \/ ContinueOrdBranchTrue
+    \/ ContinueOrdBranchFalse
     \/ EnableCacheTrue
     \/ EnableCacheFalse
     \/ SwitchThread
@@ -125,27 +279,35 @@ Spec == Init /\ [][Next]_vars
 \* starting a new chain retires the old handle (models inline Query.Include(...).ThenInclude(...)).
 LinearIncludeTrue ==
     /\ incState' = "active"
+    /\ incFlag' = FALSE
     /\ ordState' = "none"
-    /\ flag' = FALSE
-    /\ UNCHANGED <<otherFlag, orphanEmitted, activeDropped>>
+    /\ ordFlag' = FALSE
+    /\ UNCHANGED <<incBranchState, incBranchFlag, ordBranchState, ordBranchFlag,
+                   orphanEmitted, activeDropped>>
 
 LinearIncludeFalse ==
     /\ incState' = "discarded"
+    /\ incFlag' = TRUE
     /\ ordState' = "none"
-    /\ flag' = TRUE
-    /\ UNCHANGED <<otherFlag, orphanEmitted, activeDropped>>
+    /\ ordFlag' = FALSE
+    /\ UNCHANGED <<incBranchState, incBranchFlag, ordBranchState, ordBranchFlag,
+                   orphanEmitted, activeDropped>>
 
 LinearOrderByTrue ==
     /\ incState' = "none"
+    /\ incFlag' = FALSE
     /\ ordState' = "active"
-    /\ flag' = FALSE
-    /\ UNCHANGED <<otherFlag, orphanEmitted, activeDropped>>
+    /\ ordFlag' = FALSE
+    /\ UNCHANGED <<incBranchState, incBranchFlag, ordBranchState, ordBranchFlag,
+                   orphanEmitted, activeDropped>>
 
 LinearOrderByFalse ==
     /\ incState' = "none"
+    /\ incFlag' = FALSE
     /\ ordState' = "discarded"
-    /\ flag' = TRUE
-    /\ UNCHANGED <<otherFlag, orphanEmitted, activeDropped>>
+    /\ ordFlag' = TRUE
+    /\ UNCHANGED <<incBranchState, incBranchFlag, ordBranchState, ordBranchFlag,
+                   orphanEmitted, activeDropped>>
 
 NextLinear ==
     \/ LinearIncludeTrue
@@ -167,9 +329,13 @@ NoSilentDrop == ~activeDropped
 
 TypeOK ==
     /\ incState \in {"none", "active", "discarded"}
+    /\ incFlag \in BOOLEAN
+    /\ incBranchState \in {"none", "active", "discarded"}
+    /\ incBranchFlag \in BOOLEAN
     /\ ordState \in {"none", "active", "discarded"}
-    /\ flag \in BOOLEAN
-    /\ otherFlag \in BOOLEAN
+    /\ ordFlag \in BOOLEAN
+    /\ ordBranchState \in {"none", "active", "discarded"}
+    /\ ordBranchFlag \in BOOLEAN
     /\ orphanEmitted \in BOOLEAN
     /\ activeDropped \in BOOLEAN
 

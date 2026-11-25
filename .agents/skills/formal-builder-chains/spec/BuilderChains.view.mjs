@@ -1,18 +1,30 @@
-export const title = "Specification Builder Chain State (IsChainDiscarded)";
+export const title = "Specification Builder Chain State (per-builder IsChainDiscarded)";
+
+const handles = (v) => [
+  [v.incState, v.incFlag],
+  [v.incBranchState, v.incBranchFlag],
+  [v.ordState, v.ordFlag],
+  [v.ordBranchState, v.ordBranchFlag],
+];
 
 export const state = (v) => {
   if (v.orphanEmitted && v.activeDropped) return "Both rules broken";
   if (v.orphanEmitted) return "Orphan continuation emitted";
   if (v.activeDropped) return "Active continuation dropped";
-  if (v.incState === "none" && v.ordState === "none") {
-    return v.flag ? "No chain (flag discarded)" : "Start (flag clear)";
-  }
-  const hasActive = v.incState === "active" || v.ordState === "active";
-  const hasDiscarded = v.incState === "discarded" || v.ordState === "discarded";
-  if (hasDiscarded && !v.flag) return "Discarded chain exposed (flag clear)";
-  if (hasActive && v.flag) return "Active chain clobbered (flag discarded)";
-  if (hasActive) return "Chain active (flag clear)";
-  return "Chain discarded (flag discarded)";
+
+  const list = handles(v);
+  const exposed = list.some(([s, f]) => s === "discarded" && !f);
+  const clobbered = list.some(([s, f]) => s === "active" && f);
+  if (exposed && clobbered) return "Handles out of sync (exposed & clobbered)";
+  if (exposed) return "Discarded handle exposed (flag clear)";
+  if (clobbered) return "Active handle clobbered (flag discarded)";
+
+  const hasActive = list.some(([s]) => s === "active");
+  const hasDiscarded = list.some(([s]) => s === "discarded");
+  if (!hasActive && !hasDiscarded) return "Start";
+  if (hasActive && hasDiscarded) return "Active and discarded handles";
+  if (hasActive) return "Active handle(s)";
+  return "Discarded handle(s)";
 };
 
 export const step = (action, from, to) => {
@@ -29,16 +41,36 @@ export const step = (action, from, to) => {
     case "LinearIncludeFalse":
     case "LinearOrderByFalse":
       return "start chain (false)";
+    case "IncludeTrueFromOrder":
+    case "OrderByTrueFromInclude":
+      return "handoff to new chain (true)";
+    case "IncludeFalseFromOrder":
+    case "OrderByFalseFromInclude":
+      return "handoff to new chain (false)";
     case "ThenIncludeTrue":
     case "ThenByTrue":
+    case "ContinueIncBranchTrue":
+    case "ContinueOrdBranchTrue":
       return to.orphanEmitted && !from.orphanEmitted
         ? "continue chain (true) [orphan!]"
         : to.activeDropped && !from.activeDropped
           ? "continue chain (true) [dropped!]"
           : "continue chain (true)";
+    case "BranchThenIncludeTrue":
+    case "BranchThenByTrue":
+      return to.orphanEmitted && !from.orphanEmitted
+        ? "branch handle (true) [orphan!]"
+        : to.activeDropped && !from.activeDropped
+          ? "branch handle (true) [dropped!]"
+          : "branch handle (true)";
     case "ThenIncludeFalse":
     case "ThenByFalse":
+    case "ContinueIncBranchFalse":
+    case "ContinueOrdBranchFalse":
       return "continue chain (false)";
+    case "BranchThenIncludeFalse":
+    case "BranchThenByFalse":
+      return "branch handle (false)";
     case "EnableCacheTrue":
       return "EnableCache(true)";
     case "EnableCacheFalse":
@@ -52,7 +84,9 @@ export const step = (action, from, to) => {
 
 export const group = (v) => {
   if (v.orphanEmitted || v.activeDropped) return "broken";
-  if (v.incState === "none" && v.ordState === "none") return "start";
+  const list = handles(v);
+  if (list.some(([s, f]) => (s === "discarded" && !f) || (s === "active" && f))) return "broken";
+  if (list.every(([s]) => s === "none")) return "start";
   return "building";
 };
 
