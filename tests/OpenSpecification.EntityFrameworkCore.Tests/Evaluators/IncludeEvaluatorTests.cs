@@ -1,4 +1,6 @@
-﻿namespace Tests.Evaluators;
+﻿using System.Linq.Expressions;
+
+namespace Tests.Evaluators;
 
 [Collection("SharedCollection")]
 public class IncludeEvaluatorTests(TestFactory factory) : IntegrationTest(factory)
@@ -142,5 +144,17 @@ public class IncludeEvaluatorTests(TestFactory factory) : IntegrationTest(factor
             .ToQueryString();
 
         actual.Should().Be(expected);
+    }
+
+    [Fact]
+    public void DoesNotApplyRootInclude_GivenSingleThenIncludeOnSpecificationFastPath()
+    {
+        Expression<Func<Store, Company?>> company = x => x.Company;
+        var spec = new Specification<Store>();
+        spec.Add(new IncludeExpressionInfo(company, typeof(Store)));
+
+        var action = () => _evaluator.GetQuery(DbContext.Stores, spec);
+
+        action.Should().Throw<InvalidCastException>();
     }
 }
