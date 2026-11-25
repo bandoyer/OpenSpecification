@@ -8,12 +8,7 @@ checks = "local"
 # would otherwise slip past.
 suite = '''
 set -eu
-export SPECIFICATION_TEST_SQL_SERVER='Server=localhost,1433;User Id=sa;Password=P@ssW0rd!;TrustServerCertificate=True'
-echo "=== dotnet build ci.slnf --configuration Release"; dotnet build ci.slnf --configuration Release
-echo "=== dotnet test ci.slnf --framework net10.0"
-flock "$HOME/.cache/specification-spec-sql.lock" dotnet test ci.slnf --configuration Release --no-build --framework net10.0
-echo "=== tests/package-contents.sh"; tests/package-contents.sh
-for test in .agents/skills/verify-specification/tests/*.sh; do echo "=== $test"; "$test"; done
+./tests/check.sh
 '''
 
 # The chief's policy: what /skillflow chief answers from, merges, and leaves to Dan. skillflow's references/chief.md
