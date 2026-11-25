@@ -26,7 +26,10 @@ public abstract class RepositoryBase<T> : IRepositoryBase<T> where T : class
     {
         DbContext.Set<T>().Add(entity);
 
-        await SaveChangesAsync(cancellationToken);
+        if (AutoSaveChanges)
+        {
+            await SaveChangesAsync(cancellationToken);
+        }
 
         return entity;
     }
@@ -36,7 +39,10 @@ public abstract class RepositoryBase<T> : IRepositoryBase<T> where T : class
     {
         DbContext.Set<T>().AddRange(entities);
 
-        await SaveChangesAsync(cancellationToken);
+        if (AutoSaveChanges)
+        {
+            await SaveChangesAsync(cancellationToken);
+        }
 
         return entities;
     }
@@ -46,8 +52,9 @@ public abstract class RepositoryBase<T> : IRepositoryBase<T> where T : class
     {
         DbContext.Entry(entity).State = EntityState.Modified;
 
-        var result = await SaveChangesAsync(cancellationToken);
-        return result;
+        return AutoSaveChanges
+            ? await SaveChangesAsync(cancellationToken)
+            : 0;
     }
 
     /// <inheritdoc/>
@@ -58,8 +65,9 @@ public abstract class RepositoryBase<T> : IRepositoryBase<T> where T : class
             DbContext.Entry(entity).State = EntityState.Modified;
         }
 
-        var result = await SaveChangesAsync(cancellationToken);
-        return result;
+        return AutoSaveChanges
+            ? await SaveChangesAsync(cancellationToken)
+            : 0;
     }
 
     /// <inheritdoc/>
@@ -67,8 +75,9 @@ public abstract class RepositoryBase<T> : IRepositoryBase<T> where T : class
     {
         DbContext.Set<T>().Remove(entity);
 
-        var result = await SaveChangesAsync(cancellationToken);
-        return result;
+        return AutoSaveChanges
+            ? await SaveChangesAsync(cancellationToken)
+            : 0;
     }
 
     /// <inheritdoc/>
@@ -76,8 +85,9 @@ public abstract class RepositoryBase<T> : IRepositoryBase<T> where T : class
     {
         DbContext.Set<T>().RemoveRange(entities);
 
-        var result = await SaveChangesAsync(cancellationToken);
-        return result;
+        return AutoSaveChanges
+            ? await SaveChangesAsync(cancellationToken)
+            : 0;
     }
 
     /// <inheritdoc/>
@@ -86,8 +96,9 @@ public abstract class RepositoryBase<T> : IRepositoryBase<T> where T : class
         var query = ApplySpecification(specification);
         DbContext.Set<T>().RemoveRange(query);
 
-        var result = await SaveChangesAsync(cancellationToken);
-        return result;
+        return AutoSaveChanges
+            ? await SaveChangesAsync(cancellationToken)
+            : 0;
     }
 
     /// <inheritdoc/>
@@ -241,6 +252,13 @@ public abstract class RepositoryBase<T> : IRepositoryBase<T> where T : class
         throw new NotImplementedException();
     }
 #endif
+
+    /// <summary>
+    /// Gets a value indicating whether write methods call <see cref="SaveChangesAsync"/> automatically.
+    /// Override and return <see langword="false"/> to stage changes on <see cref="DbContext"/> and commit them
+    /// explicitly as a Unit of Work. The default is <see langword="true"/>.
+    /// </summary>
+    protected virtual bool AutoSaveChanges => true;
 
     /// <summary>
     /// Gets the default page size and the page size limit that PagedListAsync uses. Override it to give this
