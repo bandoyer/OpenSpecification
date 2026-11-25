@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Run TLC on BuilderChains.tla for either the full model (default) or linear-only chains.
+# Usage: scripts/check [full|linear]
+set -euo pipefail
+
+mode="${1:-full}"
+script_dir=$(cd "$(dirname "$0")" && pwd)
+spec_dir="$script_dir/../spec"
+
+case "$mode" in
+  full)   cfg="$spec_dir/BuilderChains.cfg" ;;
+  linear) cfg="$spec_dir/LinearChains.cfg" ;;
+  *)
+    echo "Usage: $0 [full|linear]" >&2
+    exit 2
+    ;;
+esac
+
+jar="${TLA2TOOLS:-}"
+if [[ -z "$jar" ]]; then
+  for candidate in \
+    "$HOME/.local/share/tlaplus/tla2tools.jar" \
+    "$HOME/.local/share/mise/installs/http-tla2tools"/*/tla2tools.jar; do
+    if [[ -f "$candidate" ]]; then
+      jar="$candidate"
+      break
+    fi
+  done
+fi
+
+if [[ -z "$jar" || ! -f "$jar" ]]; then
+  echo "tla2tools.jar not found. Set TLA2TOOLS or install tla2tools 1.7.4 (for example, via /statechart)." >&2
+  exit 2
+fi
+
+if ! command -v java >/dev/null 2>&1; then
+  echo "java not found on PATH." >&2
+  exit 2
+fi
+
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/formal-builder-chains.XXXXXX")
+trap 'rm -rf -- "$tmp"' EXIT
+
+echo "Mode: $mode ($cfg)"
+echo "Jar: $jar"
+java -XX:+UseParallelGC -cp "$jar" tlc2.TLC \
+  -workers 1 \
+  -metadir "$tmp/states" \
+  -config "$cfg" \
+  "$spec_dir/BuilderChains.tla"
