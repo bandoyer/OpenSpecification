@@ -24,7 +24,8 @@ public interface IIncludableSpecificationBuilder<T, out TProperty>
 internal class IncludableSpecificationBuilder<T, TResult, TProperty>
     : SpecificationBuilder<T, TResult>, IIncludableSpecificationBuilder<T, TResult, TProperty> where T : class
 {
-    public IncludableSpecificationBuilder(Specification<T, TResult> specification) : base(specification)
+    public IncludableSpecificationBuilder(Specification<T, TResult> specification, bool isChainDiscarded = false)
+        : base(specification, isChainDiscarded)
     {
     }
 }
@@ -32,7 +33,8 @@ internal class IncludableSpecificationBuilder<T, TResult, TProperty>
 internal class IncludableSpecificationBuilder<T, TProperty>
     : SpecificationBuilder<T>, IIncludableSpecificationBuilder<T, TProperty> where T : class
 {
-    public IncludableSpecificationBuilder(Specification<T> specification) : base(specification)
+    public IncludableSpecificationBuilder(Specification<T> specification, bool isChainDiscarded = false)
+        : base(specification, isChainDiscarded)
     {
     }
 }

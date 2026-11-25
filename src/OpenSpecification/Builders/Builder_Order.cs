@@ -13,10 +13,7 @@ public static partial class SpecificationBuilderExtensions
     public static IOrderedSpecificationBuilder<T, TResult> OrderBy<T, TResult>(
         this ISpecificationBuilder<T, TResult> builder,
         Expression<Func<T, object?>> keySelector)
-    {
-        OrderBy((ISpecificationBuilder<T>)builder, keySelector, true);
-        return (SpecificationBuilder<T, TResult>)builder;
-    }
+        => OrderBy(builder, keySelector, true);
 
     /// <summary>
     /// Adds an OrderBy clause to the specification if the condition is true.
@@ -31,10 +28,7 @@ public static partial class SpecificationBuilderExtensions
         this ISpecificationBuilder<T, TResult> builder,
         Expression<Func<T, object?>> keySelector,
         bool condition)
-    {
-        OrderBy((ISpecificationBuilder<T>)builder, keySelector, condition);
-        return (SpecificationBuilder<T, TResult>)builder;
-    }
+        => AddOrderStart(builder, keySelector, OrderTypeEnum.OrderBy, condition);
 
     /// <summary>
     /// Adds an OrderBy clause to the specification.
@@ -60,16 +54,7 @@ public static partial class SpecificationBuilderExtensions
         this ISpecificationBuilder<T> builder,
         Expression<Func<T, object?>> keySelector,
         bool condition)
-    {
-        if (condition)
-        {
-            var expr = new OrderExpressionInfo<T>(keySelector, OrderTypeEnum.OrderBy);
-            builder.Specification.Add(expr);
-        }
-
-        Specification<T>.IsChainDiscarded = !condition;
-        return (SpecificationBuilder<T>)builder;
-    }
+        => AddOrderStart(builder, keySelector, OrderTypeEnum.OrderBy, condition);
 
     /// <summary>
     /// Adds an OrderBy descending clause to the specification.
@@ -82,10 +67,7 @@ public static partial class SpecificationBuilderExtensions
     public static IOrderedSpecificationBuilder<T, TResult> OrderByDescending<T, TResult>(
         this ISpecificationBuilder<T, TResult> builder,
         Expression<Func<T, object?>> keySelector)
-    {
-        OrderByDescending((ISpecificationBuilder<T>)builder, keySelector, true);
-        return (SpecificationBuilder<T, TResult>)builder;
-    }
+        => OrderByDescending(builder, keySelector, true);
 
     /// <summary>
     /// Adds an OrderByDescending clause to the specification if the condition is true.
@@ -100,10 +82,7 @@ public static partial class SpecificationBuilderExtensions
         this ISpecificationBuilder<T, TResult> builder,
         Expression<Func<T, object?>> keySelector,
         bool condition)
-    {
-        OrderByDescending((ISpecificationBuilder<T>)builder, keySelector, condition);
-        return (SpecificationBuilder<T, TResult>)builder;
-    }
+        => AddOrderStart(builder, keySelector, OrderTypeEnum.OrderByDescending, condition);
 
     /// <summary>
     /// Adds an OrderByDescending clause to the specification.
@@ -129,16 +108,7 @@ public static partial class SpecificationBuilderExtensions
         this ISpecificationBuilder<T> builder,
         Expression<Func<T, object?>> keySelector,
         bool condition)
-    {
-        if (condition)
-        {
-            var expr = new OrderExpressionInfo<T>(keySelector, OrderTypeEnum.OrderByDescending);
-            builder.Specification.Add(expr);
-        }
-
-        Specification<T>.IsChainDiscarded = !condition;
-        return (SpecificationBuilder<T>)builder;
-    }
+        => AddOrderStart(builder, keySelector, OrderTypeEnum.OrderByDescending, condition);
 
     /// <summary>
     /// Adds a ThenBy clause to the specification.
@@ -151,10 +121,7 @@ public static partial class SpecificationBuilderExtensions
     public static IOrderedSpecificationBuilder<T, TResult> ThenBy<T, TResult>(
         this IOrderedSpecificationBuilder<T, TResult> builder,
         Expression<Func<T, object?>> keySelector)
-    {
-        ThenBy((IOrderedSpecificationBuilder<T>)builder, keySelector, true);
-        return builder;
-    }
+        => ThenBy(builder, keySelector, true);
 
     /// <summary>
     /// Adds a ThenBy clause to the specification if the condition is true.
@@ -169,10 +136,7 @@ public static partial class SpecificationBuilderExtensions
         this IOrderedSpecificationBuilder<T, TResult> builder,
         Expression<Func<T, object?>> keySelector,
         bool condition)
-    {
-        ThenBy((IOrderedSpecificationBuilder<T>)builder, keySelector, condition);
-        return builder;
-    }
+        => AddOrderContinuation(builder, keySelector, OrderTypeEnum.ThenBy, condition);
 
     /// <summary>
     /// Adds a ThenBy clause to the specification.
@@ -198,19 +162,7 @@ public static partial class SpecificationBuilderExtensions
         this IOrderedSpecificationBuilder<T> builder,
         Expression<Func<T, object?>> keySelector,
         bool condition)
-    {
-        if (condition && !Specification<T>.IsChainDiscarded)
-        {
-            var expr = new OrderExpressionInfo<T>(keySelector, OrderTypeEnum.ThenBy);
-            builder.Specification.Add(expr);
-        }
-        else
-        {
-            Specification<T>.IsChainDiscarded = true;
-        }
-
-        return builder;
-    }
+        => AddOrderContinuation(builder, keySelector, OrderTypeEnum.ThenBy, condition);
 
     /// <summary>
     /// Adds a ThenByDescending clause to the specification.
@@ -223,10 +175,7 @@ public static partial class SpecificationBuilderExtensions
     public static IOrderedSpecificationBuilder<T, TResult> ThenByDescending<T, TResult>(
         this IOrderedSpecificationBuilder<T, TResult> builder,
         Expression<Func<T, object?>> keySelector)
-    {
-        ThenByDescending((IOrderedSpecificationBuilder<T>)builder, keySelector, true);
-        return builder;
-    }
+        => ThenByDescending(builder, keySelector, true);
 
     /// <summary>
     /// Adds a ThenByDescending clause to the specification if the condition is true.
@@ -241,10 +190,7 @@ public static partial class SpecificationBuilderExtensions
         this IOrderedSpecificationBuilder<T, TResult> builder,
         Expression<Func<T, object?>> keySelector,
         bool condition)
-    {
-        ThenByDescending((IOrderedSpecificationBuilder<T>)builder, keySelector, condition);
-        return builder;
-    }
+        => AddOrderContinuation(builder, keySelector, OrderTypeEnum.ThenByDescending, condition);
 
     /// <summary>
     /// Adds a ThenByDescending clause to the specification.
@@ -270,17 +216,75 @@ public static partial class SpecificationBuilderExtensions
         this IOrderedSpecificationBuilder<T> builder,
         Expression<Func<T, object?>> keySelector,
         bool condition)
+        => AddOrderContinuation(builder, keySelector, OrderTypeEnum.ThenByDescending, condition);
+
+    private static IOrderedSpecificationBuilder<T, TResult> AddOrderStart<T, TResult>(
+        ISpecificationBuilder<T, TResult> builder,
+        Expression<Func<T, object?>> keySelector,
+        OrderTypeEnum orderType,
+        bool condition)
     {
-        if (condition && !Specification<T>.IsChainDiscarded)
+        if (condition)
         {
-            var expr = new OrderExpressionInfo<T>(keySelector, OrderTypeEnum.ThenByDescending);
+            var expr = new OrderExpressionInfo<T>(keySelector, orderType);
             builder.Specification.Add(expr);
-        }
-        else
-        {
-            Specification<T>.IsChainDiscarded = true;
+            return builder is SpecificationBuilder<T, TResult> { IsChainDiscarded: false } existing
+                ? existing
+                : new SpecificationBuilder<T, TResult>(builder.Specification);
         }
 
-        return builder;
+        return new SpecificationBuilder<T, TResult>(builder.Specification, isChainDiscarded: true);
+    }
+
+    private static IOrderedSpecificationBuilder<T> AddOrderStart<T>(
+        ISpecificationBuilder<T> builder,
+        Expression<Func<T, object?>> keySelector,
+        OrderTypeEnum orderType,
+        bool condition)
+    {
+        if (condition)
+        {
+            var expr = new OrderExpressionInfo<T>(keySelector, orderType);
+            builder.Specification.Add(expr);
+            return builder is SpecificationBuilder<T> { IsChainDiscarded: false } existing
+                ? existing
+                : new SpecificationBuilder<T>(builder.Specification);
+        }
+
+        return new SpecificationBuilder<T>(builder.Specification, isChainDiscarded: true);
+    }
+
+    private static IOrderedSpecificationBuilder<T, TResult> AddOrderContinuation<T, TResult>(
+        IOrderedSpecificationBuilder<T, TResult> builder,
+        Expression<Func<T, object?>> keySelector,
+        OrderTypeEnum orderType,
+        bool condition)
+    {
+        var isDiscarded = builder is SpecificationBuilder<T> { IsChainDiscarded: true };
+        if (condition && !isDiscarded)
+        {
+            var expr = new OrderExpressionInfo<T>(keySelector, orderType);
+            builder.Specification.Add(expr);
+            return builder;
+        }
+
+        return isDiscarded ? builder : new SpecificationBuilder<T, TResult>(builder.Specification, isChainDiscarded: true);
+    }
+
+    private static IOrderedSpecificationBuilder<T> AddOrderContinuation<T>(
+        IOrderedSpecificationBuilder<T> builder,
+        Expression<Func<T, object?>> keySelector,
+        OrderTypeEnum orderType,
+        bool condition)
+    {
+        var isDiscarded = builder is SpecificationBuilder<T> { IsChainDiscarded: true };
+        if (condition && !isDiscarded)
+        {
+            var expr = new OrderExpressionInfo<T>(keySelector, orderType);
+            builder.Specification.Add(expr);
+            return builder;
+        }
+
+        return isDiscarded ? builder : new SpecificationBuilder<T>(builder.Specification, isChainDiscarded: true);
     }
 }

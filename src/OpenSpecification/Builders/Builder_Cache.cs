@@ -83,7 +83,6 @@ public static partial class SpecificationBuilderExtensions
             builder.Specification.CacheKey = $"{specificationName}-{string.Join("-", args)}";
         }
 
-        Specification<T>.IsChainDiscarded = !condition;
         return (SpecificationBuilder<T>)builder;
     }
 
@@ -160,7 +159,6 @@ public static partial class SpecificationBuilderExtensions
             builder.Specification.CacheKey = cacheKey;
         }
 
-        Specification<T>.IsChainDiscarded = !condition;
         return (SpecificationBuilder<T>)builder;
     }
 }
