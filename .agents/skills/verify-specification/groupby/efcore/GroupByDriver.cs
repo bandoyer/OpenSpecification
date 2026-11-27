@@ -71,6 +71,7 @@ static class GroupByDriver
     {
         RunContractSurface();
         await RunSingleAndCompositeGroups(options, sqlLog);
+        await RunHavingAndOrdering(options, sqlLog);
         await RunPostProcessingAndCache(options);
         await RunValidationAndConflicts(options, sqlLog);
         await RunCompositionAndCustomEvaluators(options, sqlLog);
@@ -79,9 +80,12 @@ static class GroupByDriver
     private static void RunContractSurface()
     {
         var groupedPublic = typeof(IGroupedSpecificationBuilder<,,>).IsPublic;
+        var orderedPublic = typeof(IOrderedGroupedSpecificationBuilder<,,>).IsPublic;
+        var orderedInheritsGrouped = typeof(IGroupedSpecificationBuilder<Product, string, string>).IsAssignableFrom(typeof(IOrderedGroupedSpecificationBuilder<Product, string, string>));
         var groupedResultPublic = typeof(IGroupedResultSpecificationBuilder<,>).IsPublic;
         var dupExPublic = typeof(DuplicateGroupByException).IsPublic;
         var isolated = !typeof(ISpecificationBuilder<Product, string>).IsAssignableFrom(typeof(IGroupedSpecificationBuilder<Product, string, string>))
+            && !typeof(ISpecificationBuilder<Product, string>).IsAssignableFrom(typeof(IOrderedGroupedSpecificationBuilder<Product, string, string>))
             && !typeof(ISpecificationBuilder<Product, string>).IsAssignableFrom(typeof(IGroupedResultSpecificationBuilder<Product, string>));
         var ifacesUntouched = typeof(ISpecification<Product>).GetMembers().All(m => !m.Name.Contains("GroupBy", StringComparison.OrdinalIgnoreCase))
             && typeof(ISpecification<Product, string>).GetMembers().All(m => !m.Name.Contains("GroupBy", StringComparison.OrdinalIgnoreCase))
@@ -91,7 +95,7 @@ static class GroupByDriver
             .Where(m => m.Name is "Select" or "SelectMany" && m.GetParameters()[0].ParameterType.GetGenericTypeDefinition() == typeof(ISpecificationBuilder<,>))
             .All(m => m.ReturnType == typeof(void));
 
-        Console.WriteLine($"contract-surface: grouped={groupedPublic}; result={groupedResultPublic}; dupEx={dupExPublic}; isolated={isolated}; ifacesUntouched={ifacesUntouched}; selectVoid={selectVoid}");
+        Console.WriteLine($"contract-surface: grouped={groupedPublic}; ordered={orderedPublic}/{orderedInheritsGrouped}; result={groupedResultPublic}; dupEx={dupExPublic}; isolated={isolated}; ifacesUntouched={ifacesUntouched}; selectVoid={selectVoid}");
     }
 
     private static async Task RunSingleAndCompositeGroups(DbContextOptions<GroupByContext> options, SqlCaptureInterceptor sqlLog)
@@ -221,6 +225,206 @@ static class GroupByDriver
             && anonStr == string.Join(",", memDto.Select(FormatComp));
 
         Console.WriteLine($"groupby-single-and-composite: single=[{singleStr}]; surfacesMatch={surfacesMatch}; tag={sqlHasTag}; ignoreFilter=[{string.Join(",", ignoredFilterList.Select(x => $"{x.Category}:{x.Count}/{x.Sum}"))}]; tracking=[{string.Join(",", trackingList.Select(x => $"{x.Category}:{x.Count}/{x.Sum}"))}]; first={first?.Category}:{first?.Sum}; singleRes={single?.Category}:{single?.Sum}; composite=[{anonStr}]; compositeMatch={compositeMatch}; empty={emptyKeyCount}/{emptyConstCount}/{memEmptyKey}/{memEmptyConst}");
+    }
+
+    private static async Task RunHavingAndOrdering(DbContextOptions<GroupByContext> options, SqlCaptureInterceptor sqlLog)
+    {
+        var havingAndSpec = new Specification<Product, CompositeSummary>();
+        havingAndSpec.Query
+            .GroupBy(p => new { CompanyName = p.Company!.Name, p.Category })
+            .Having(g => g.Count() >= 2)
+            .Having(g => g.Count() > 99, condition: false)
+            .Having(g => g.Sum(p => p.Price) >= 50)
+            .OrderByDescending(g => g.Sum(p => p.Price))
+            .Select(g => new CompositeSummary
+            {
+                CompanyName = g.Key.CompanyName,
+                Category = g.Key.Category,
+                Count = g.Count(),
+                Sum = g.Sum(p => p.Price),
+            });
+
+        var orderThenHavingSpec = new Specification<Product, CompositeSummary>();
+        orderThenHavingSpec.Query
+            .GroupBy(p => new { CompanyName = p.Company!.Name, p.Category })
+            .OrderByDescending(g => g.Sum(p => p.Price))
+            .Having(g => g.Count() >= 2)
+            .Having(g => g.Sum(p => p.Price) >= 50)
+            .Select(g => new CompositeSummary
+            {
+                CompanyName = g.Key.CompanyName,
+                Category = g.Key.Category,
+                Count = g.Count(),
+                Sum = g.Sum(p => p.Price),
+            });
+
+        var unprojectedAggOrderSpec = new Specification<Product, string>();
+        unprojectedAggOrderSpec.Query
+            .GroupBy(p => new { CompanyName = p.Company!.Name, p.Category })
+            .OrderByDescending(g => g.Count())
+            .ThenBy(g => g.Key.CompanyName)
+            .ThenByDescending(g => g.Sum(p => p.Price))
+            .Select(g => g.Key.CompanyName + "/" + g.Key.Category);
+
+        var avgOrderSpec = new Specification<Product, string>();
+        avgOrderSpec.Query
+            .GroupBy(p => new { CompanyName = p.Company!.Name, p.Category })
+            .OrderBy(g => g.Average(p => p.Price))
+            .Select(g => g.Key.CompanyName + "/" + g.Key.Category);
+
+        var maxOrderSpec = new Specification<Product, string>();
+        maxOrderSpec.Query
+            .GroupBy(p => new { CompanyName = p.Company!.Name, p.Category })
+            .OrderByDescending(g => g.Max(p => p.Price))
+            .Select(g => g.Key.CompanyName + "/" + g.Key.Category);
+
+        var discardedPrimarySpec = new Specification<Product, string>();
+        discardedPrimarySpec.Query
+            .GroupBy(p => new { CompanyName = p.Company!.Name, p.Category })
+            .OrderBy(g => g.Key.Category, condition: false)
+            .ThenByDescending(g => g.Sum(p => p.Price))
+            .OrderByDescending(g => g.Sum(p => p.Price), condition: true)
+            .ThenBy(g => g.Key.CompanyName)
+            .Select(g => g.Key.CompanyName + "/" + g.Key.Category);
+
+        var nestedDiscardAndSavedHandleSpec = new Specification<Product, string>();
+        var activeOrdHandle = nestedDiscardAndSavedHandleSpec.Query
+            .GroupBy(p => new { CompanyName = p.Company!.Name, p.Category })
+            .OrderByDescending(g => g.Count());
+        activeOrdHandle
+            .ThenBy(g => g.Key.CompanyName, condition: false)
+            .ThenByDescending(g => g.Sum(p => p.Price));
+        activeOrdHandle
+            .ThenBy(g => g.Sum(p => p.Price))
+            .Select(g => g.Key.CompanyName + "/" + g.Key.Category);
+
+        var emptyHavingOrderSpec = new Specification<Product, string>();
+        emptyHavingOrderSpec.Query
+            .Where(p => p.Id < 0)
+            .GroupBy(p => p.Category)
+            .Having(g => g.Count() > 0)
+            .OrderByDescending(g => g.Sum(p => p.Price))
+            .ThenBy(g => g.Key)
+            .Select(g => g.Key);
+
+        var dupOrderDirectSpec = new Specification<Product, string>();
+        dupOrderDirectSpec.Query
+            .GroupBy(p => p.Category)
+            .OrderBy(g => g.Key)
+            .OrderByDescending(g => g.Count())
+            .Select(g => g.Key);
+
+        var dupOrderAcrossHavingSpec = new Specification<Product, string>();
+        dupOrderAcrossHavingSpec.Query
+            .GroupBy(p => p.Category)
+            .OrderBy(g => g.Key)
+            .Having(g => g.Count() > 0)
+            .OrderByDescending(g => g.Count())
+            .Select(g => g.Key);
+
+        var oneActiveOneFalseOrderSpec = new Specification<Product, string>();
+        oneActiveOneFalseOrderSpec.Query
+            .GroupBy(p => p.Category)
+            .OrderBy(g => g.Key, condition: true)
+            .OrderByDescending(g => g.Count(), condition: false)
+            .Select(g => g.Key);
+
+        var nullGuardsOk = Throws<ArgumentNullException>(() =>
+        {
+            var s = new Specification<Product, string>();
+            s.Query.GroupBy(p => p.Category).Having(null!);
+        }) && Throws<ArgumentNullException>(() =>
+        {
+            var s = new Specification<Product, string>();
+            s.Query.GroupBy(p => p.Category).OrderBy<Product, string, string, string>(null!);
+        });
+        var inactiveNullSpec = new Specification<Product, string>();
+        inactiveNullSpec.Query
+            .GroupBy(p => p.Category)
+            .Having(null!, condition: false)
+            .OrderBy<Product, string, string, string>(null!, condition: false)
+            .Select(g => g.Key);
+
+        var cloneSource = new Specification<Product>();
+        var cloneTemplate = new Specification<Product, string>();
+        var templateGrouped = cloneTemplate.Query
+            .GroupBy(p => p.Category)
+            .Having(g => g.Count() >= 1);
+        templateGrouped.OrderBy(g => g.Key).Select(g => g.Key);
+
+        var clonedSpec = cloneSource.WithProjectionOf(cloneTemplate);
+        templateGrouped.Having(g => g.Count() >= 4);
+        templateGrouped.OrderByDescending(g => g.Count());
+
+        await using var db = new GroupByContext(options);
+        var repo = new ProductRepository(db);
+        var factoryRepo = new ProductFactoryRepository(new SimpleFactory(options));
+        var activeEntities = await db.Products.Include(p => p.Company).AsNoTracking().ToListAsync();
+
+        var havingList = await repo.ListAsync(havingAndSpec);
+        var orderThenHavingList = await repo.ListAsync(orderThenHavingSpec);
+        var havingMem = havingAndSpec.Evaluate(activeEntities).ToList();
+
+        var aggList = await repo.ListAsync(unprojectedAggOrderSpec);
+        var aggDbSetList = await db.Products.ToListAsync(unprojectedAggOrderSpec);
+        var aggDbSetEnum = (await db.Products.ToEnumerableAsync(unprojectedAggOrderSpec)).ToList();
+        var aggWithSpec = await db.Products.WithSpecification(unprojectedAggOrderSpec).ToListAsync();
+        var aggFirst = await repo.FirstOrDefaultAsync(unprojectedAggOrderSpec);
+        var aggStream = new List<string>();
+        await foreach (var item in repo.AsAsyncEnumerable(unprojectedAggOrderSpec)) aggStream.Add(item);
+        var aggFactoryStream = new List<string>();
+        await foreach (var item in factoryRepo.AsAsyncEnumerable(unprojectedAggOrderSpec)) aggFactoryStream.Add(item);
+        var aggDbSetStream = new List<string>();
+        await foreach (var item in db.Products.AsAsyncEnumerable(unprojectedAggOrderSpec)) aggDbSetStream.Add(item);
+        var aggMem = unprojectedAggOrderSpec.Evaluate(activeEntities).ToList();
+
+        var avgList = await repo.ListAsync(avgOrderSpec);
+        var avgMem = avgOrderSpec.Evaluate(activeEntities).ToList();
+        var maxList = await repo.ListAsync(maxOrderSpec);
+        var maxMem = maxOrderSpec.Evaluate(activeEntities).ToList();
+
+        var discardedPrimaryList = await repo.ListAsync(discardedPrimarySpec);
+        var discardedPrimaryMem = discardedPrimarySpec.Evaluate(activeEntities).ToList();
+        var nestedDiscardList = await repo.ListAsync(nestedDiscardAndSavedHandleSpec);
+        var nestedDiscardMem = nestedDiscardAndSavedHandleSpec.Evaluate(activeEntities).ToList();
+        var emptyCountSql = (await repo.ListAsync(emptyHavingOrderSpec)).Count;
+        var emptyCountMem = emptyHavingOrderSpec.Evaluate(activeEntities).Count();
+        var oneActiveOrderList = await repo.ListAsync(oneActiveOneFalseOrderSpec);
+        var inactiveNullCount = (await repo.ListAsync(inactiveNullSpec)).Count;
+
+        sqlLog.Clear();
+        var dupOrderOk = Throws<DuplicateOrderChainException>(() => dupOrderDirectSpec.Evaluate(activeEntities).ToList())
+            && await ThrowsAsync<DuplicateOrderChainException>(() => repo.ListAsync(dupOrderDirectSpec))
+            && await ThrowsAsync<DuplicateOrderChainException>(() => db.Products.ToListAsync(dupOrderDirectSpec))
+            && Throws<DuplicateOrderChainException>(() => dupOrderAcrossHavingSpec.Evaluate(activeEntities).ToList())
+            && await ThrowsAsync<DuplicateOrderChainException>(() => repo.ListAsync(dupOrderAcrossHavingSpec));
+        var dupOrderSql = sqlLog.Commands.Count;
+
+        var clonedSql = await repo.ListAsync(clonedSpec);
+        var clonedMem = clonedSpec.Evaluate(activeEntities).ToList();
+        var templateNowDup = Throws<DuplicateOrderChainException>(() => cloneTemplate.Evaluate(activeEntities).ToList())
+            && await ThrowsAsync<DuplicateOrderChainException>(() => repo.ListAsync(cloneTemplate));
+
+        var havingStr = string.Join(",", havingList.Select(FormatComp));
+        var havingMatch = havingStr == string.Join(",", orderThenHavingList.Select(FormatComp))
+            && havingStr == string.Join(",", havingMem.Select(FormatComp));
+        var aggStr = string.Join(",", aggList);
+        var aggSurfacesMatch = aggStr == string.Join(",", aggDbSetList)
+            && aggStr == string.Join(",", aggDbSetEnum)
+            && aggStr == string.Join(",", aggWithSpec)
+            && aggStr == string.Join(",", aggStream)
+            && aggStr == string.Join(",", aggFactoryStream)
+            && aggStr == string.Join(",", aggDbSetStream)
+            && aggStr == string.Join(",", aggMem)
+            && aggFirst == "Alpha/Cat-2";
+        var avgMaxMatch = avgList.SequenceEqual(avgMem) && maxList.SequenceEqual(maxMem);
+        var chainIsolationMatch = discardedPrimaryList.SequenceEqual(discardedPrimaryMem)
+            && nestedDiscardList.SequenceEqual(nestedDiscardMem);
+        var cloneNoLeak = clonedSql.SequenceEqual(["Cat-1", "Cat-2"])
+            && clonedMem.SequenceEqual(["Cat-1", "Cat-2"])
+            && templateNowDup;
+
+        Console.WriteLine($"having-and-ordering: having=[{havingStr}]; havingMatch={havingMatch}; aggOrder=[{aggStr}]; aggSurfacesMatch={aggSurfacesMatch}; avg=[{string.Join(",", avgList)}]; max=[{string.Join(",", maxList)}]; avgMaxMatch={avgMaxMatch}; discardedPrimary=[{string.Join(",", discardedPrimaryList)}]; nestedDiscard=[{string.Join(",", nestedDiscardList)}]; chainIsolationMatch={chainIsolationMatch}; empty={emptyCountSql}/{emptyCountMem}; dupOrder={dupOrderOk}/sql={dupOrderSql}; oneActive=[{string.Join(",", oneActiveOrderList)}]; nullGuards={nullGuardsOk}/inactiveCount={inactiveNullCount}; cloneNoLeak={cloneNoLeak}");
     }
 
     private static async Task RunPostProcessingAndCache(DbContextOptions<GroupByContext> options)
