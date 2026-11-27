@@ -14,6 +14,14 @@ internal static class PagingExtensions
             throw new ArgumentException("A paged query sets Skip and Take from the paging filter. Remove Skip and Take from the specification.", nameof(specification));
     }
 
+    internal static void EnsurePageable<T, TResult>(this ISpecification<T, TResult> specification, IPagingFilter filter, PaginationSettings settings)
+    {
+        EnsurePageable((ISpecification<T>)specification, filter, settings);
+
+        if (GroupByHelper.GetPlan(specification) is { } plan && (plan.Skip > 0 || plan.Take >= 0))
+            throw new ArgumentException("A paged query sets Skip and Take from the paging filter. Remove Skip and Take from the specification.", nameof(specification));
+    }
+
     internal static IQueryable<T> ApplyPage<T>(this IQueryable<T> query, Pagination pagination)
     {
         // If skip is 0, avoid adding to the IQueryable, as PaginationEvaluator does.

@@ -21,10 +21,10 @@ internal static class PagedQuery
         return new PagedResult<TResult>(items, pagination);
     }
 
-    // A projection's total counts the rows its pages hold, one per entity for Select. EF6 can't page a SelectMany or
-    // a Distinct projection: it refuses Skip on rows that aren't ordered, and a specification can order only the
-    // entities, never flattened or distinct projected rows. So the method refuses them before any query, on every
-    // page, rather than serving page 1 and failing on page 2.
+    // A projection's total counts the rows its pages hold: one per entity for Select, and surviving groups for an
+    // ordered GroupBy. EF6 refuses Skip on rows that aren't ordered, so SelectMany, Distinct projections, unordered
+    // GroupBy specs, and Distinct GroupBy specs fail fast before any query, on every page, rather than serving page 1
+    // and failing on page 2.
     internal static Task<PagedResult<TResult>> ToPagedResultAsync<T, TResult>(
       IQueryable<T> criteriaQuery,
       IQueryable<TResult> pageQuery,
@@ -33,8 +33,16 @@ internal static class PagedQuery
       PaginationSettings settings,
       CancellationToken cancellationToken)
     {
-        if (GroupByHelper.GetPlan(specification) is not null)
-            throw new NotSupportedException("Paging grouped specifications is not yet supported.");
+        if (GroupByHelper.GetPlan(specification) is { } groupByPlan)
+        {
+            if (DistinctEvaluator.IsDistinctSpecification(specification))
+                throw new NotSupportedException("EF6 can't page a Distinct grouped specification, since it can't Skip distinct projected group rows without ordering them. Evaluate the distinct grouped specification without paging.");
+
+            if (!groupByPlan.HasOrdering)
+                throw new NotSupportedException("EF6 can't page an unordered grouped specification, since it requires OrderBy before Skip. Add a group OrderBy to the specification, or evaluate it without paging.");
+
+            return ToPagedResultAsync(groupByPlan.ApplyCount(criteriaQuery), pageQuery, filter, settings, cancellationToken);
+        }
 
         if (specification.SelectorMany is not null)
             throw new NotSupportedException("EF6 can't page a SelectMany specification, since it can't Skip the flattened rows, which a specification can't order. Use a Select specification, or page the entities.");

@@ -198,14 +198,164 @@ public class GroupByInMemoryTests
     }
 
     [Fact]
-    public void InterimDistinctWithGroupBy_ThrowsNotSupportedException()
+    public void PostGroupDistinctAndPreGroupByDistinct_DeduplicateBeforeGroupSkipAndTake()
     {
-        var spec = new Specification<Order, string>();
-        spec.Query.Distinct().GroupBy(o => o.Category).Select(g => g.Key);
+        var orders = new List<Order>
+        {
+            new(1, "Alpha", "Cat-1", 10),
+            new(2, "Alpha", "Cat-1", 30), // Count = 2
+            new(3, "Alpha", "Cat-2", 20),
+            new(4, "Alpha", "Cat-2", 40), // Count = 2
+            new(5, "Beta", "Cat-1", 50),  // Count = 1
+            new(6, "Beta", "Cat-2", 60),
+            new(7, "Beta", "Cat-2", 80),  // Count = 2
+        };
 
-        Action sut = () => spec.Evaluate([]).ToList();
+        var postDistinctSpec = new Specification<Order, int>();
+        postDistinctSpec.Query
+            .GroupBy(o => new { o.Region, o.Category })
+            .Select(g => g.Count())
+            .Distinct();
 
-        sut.Should().Throw<NotSupportedException>();
+        var preDistinctSpec = new Specification<Order, int>();
+        preDistinctSpec.Query
+            .Distinct()
+            .GroupBy(o => new { o.Region, o.Category })
+            .Select(g => g.Count());
+
+        var distinctFalseSpec = new Specification<Order, int>();
+        distinctFalseSpec.Query
+            .GroupBy(o => new { o.Region, o.Category })
+            .Select(g => g.Count())
+            .Distinct(false);
+
+        var distinctThenTakeSpec = new Specification<Order, int>();
+        distinctThenTakeSpec.Query
+            .GroupBy(o => new { o.Region, o.Category })
+            .Select(g => g.Count())
+            .Distinct()
+            .Take(3);
+
+        var distinctThenSkipTakeSpec = new Specification<Order, int>();
+        distinctThenSkipTakeSpec.Query
+            .GroupBy(o => new { o.Region, o.Category })
+            .Select(g => g.Count())
+            .Distinct()
+            .Skip(1)
+            .Take(1);
+
+        var preSkipThenDistinctSpec = new Specification<Order, int>();
+        preSkipThenDistinctSpec.Query
+            .GroupBy(o => new { o.Region, o.Category })
+            .Skip(1)
+            .Take(1)
+            .Select(g => g.Count())
+            .Distinct();
+
+        postDistinctSpec.Evaluate(orders).OrderBy(x => x).Should().Equal(1, 2);
+        preDistinctSpec.Evaluate(orders).OrderBy(x => x).Should().Equal(1, 2);
+        distinctFalseSpec.Evaluate(orders).OrderBy(x => x).Should().Equal(1, 2, 2, 2);
+        // Distinct deduplicates 4 groups -> 2 values BEFORE group Skip/Take.
+        distinctThenTakeSpec.Evaluate(orders).Should().HaveCount(2);
+        distinctThenSkipTakeSpec.Evaluate(orders).Should().Equal(1);
+        preSkipThenDistinctSpec.Evaluate(orders).Should().Equal(1);
+    }
+
+    [Fact]
+    public void GroupSkipAndTake_SupportSkipZeroAndTakeZero()
+    {
+        var orders = new List<Order>
+        {
+            new(1, "Alpha", "Cat-A", 10),
+            new(2, "Alpha", "Cat-B", 20),
+            new(3, "Alpha", "Cat-C", 30),
+        };
+
+        var skipZeroSpec = new Specification<Order, string>();
+        skipZeroSpec.Query.GroupBy(o => o.Category).OrderBy(g => g.Key).Skip(0).Select(g => g.Key);
+
+        var takeZeroSpec = new Specification<Order, string>();
+        takeZeroSpec.Query.GroupBy(o => o.Category).OrderBy(g => g.Key).Select(g => g.Key).Take(0);
+
+        skipZeroSpec.Evaluate(orders).Should().Equal("Cat-A", "Cat-B", "Cat-C");
+        takeZeroSpec.Evaluate(orders).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void GroupOrderByWithDistinct_ThrowsNotSupportedException_UnlessOrderByIsInactive()
+    {
+        var orders = new List<Order>
+        {
+            new(1, "Alpha", "Cat-1", 10),
+            new(2, "Alpha", "Cat-1", 30),
+            new(3, "Beta", "Cat-2", 50),
+        };
+
+        var postDistinctOrdered = new Specification<Order, int>();
+        postDistinctOrdered.Query
+            .GroupBy(o => o.Category)
+            .OrderBy(g => g.Key)
+            .Select(g => g.Count())
+            .Distinct();
+
+        var preDistinctOrdered = new Specification<Order, int>();
+        preDistinctOrdered.Query
+            .Distinct()
+            .GroupBy(o => o.Category)
+            .OrderByDescending(g => g.Count())
+            .Select(g => g.Count());
+
+        var inactiveOrderDistinct = new Specification<Order, int>();
+        inactiveOrderDistinct.Query
+            .GroupBy(o => o.Category)
+            .OrderBy(g => g.Key, false)
+            .Select(g => g.Count())
+            .Distinct();
+
+        Action a1 = () => postDistinctOrdered.Evaluate(orders).ToList();
+        Action a2 = () => preDistinctOrdered.Evaluate(orders).ToList();
+
+        a1.Should().Throw<NotSupportedException>();
+        a2.Should().Throw<NotSupportedException>();
+        inactiveOrderDistinct.Evaluate(orders).OrderBy(x => x).Should().Equal(1, 2);
+    }
+
+    [Fact]
+    public void WithProjectionOf_ClonesGroupSkipTakeAndIsDistinctWithoutStateLeakage()
+    {
+        var orders = new List<Order>
+        {
+            new(1, "North", "Cat-A", 10),
+            new(2, "North", "Cat-B", 20),
+            new(3, "North", "Cat-C", 30),
+            new(4, "South", "Cat-D", 40),
+        };
+
+        var source = new Specification<Order>();
+        source.Query.Where(o => o.Region == "North");
+
+        var sliceTemplate = new Specification<Order, string>();
+        var sliceResult = sliceTemplate.Query
+            .GroupBy(o => o.Category)
+            .OrderBy(g => g.Key)
+            .Skip(1)
+            .Select(g => g.Key);
+
+        var composedSlice = source.WithProjectionOf(sliceTemplate);
+        sliceResult.Take(1); // Mutating template after cloning must not leak into composed.
+
+        composedSlice.Evaluate(orders).Should().Equal("Cat-B", "Cat-C");
+        sliceTemplate.Evaluate(orders).Should().Equal("Cat-B");
+
+        var distinctTemplate = new Specification<Order, int>();
+        distinctTemplate.Query
+            .GroupBy(o => o.Category)
+            .Select(g => g.Count())
+            .Distinct();
+
+        var composedDistinct = source.WithProjectionOf(distinctTemplate);
+        composedDistinct.IsDistinct.Should().BeTrue();
+        composedDistinct.Evaluate(orders).Should().Equal(1);
     }
 
     [Fact]

@@ -36,7 +36,7 @@ public class SpecificationEvaluator : ISpecificationEvaluator
         {
             GroupByHelper.Validate(specification, groupByPlan);
             query = GetQuery(query, (ISpecification<T>)specification, evaluateCriteriaOnly: true);
-            return groupByPlan.Apply(query);
+            return groupByPlan.Apply(query, DistinctEvaluator.IsDistinctSpecification(specification));
         }
 
         if (specification.Selector is null && specification.SelectorMany is null) throw new SelectorNotFoundException();

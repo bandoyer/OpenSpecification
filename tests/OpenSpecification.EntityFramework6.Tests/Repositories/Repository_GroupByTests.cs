@@ -35,6 +35,20 @@ public class Repository_GroupByTests(TestFactory factory) : IntegrationTest(fact
     private sealed class CustomCountryRepository(TestDbContext context)
         : RepositoryBase<Country>(context, new CustomSpecificationEvaluator());
 
+    private sealed class SmallPageStoreRepository(TestDbContext context) : RepositoryBase<Store>(context)
+    {
+        protected override PaginationSettings PaginationSettings { get; } = new(2, 3);
+    }
+
+    private sealed class CompanyScopedStoreRepository(TestDbContext context, int companyId) : RepositoryBase<Store>(context)
+    {
+        protected override IQueryable<Store> ApplySpecification(ISpecification<Store> specification, bool evaluateCriteriaOnly = false)
+            => SpecificationEvaluator.GetQuery(DbContext.Set<Store>().Where(s => s.CompanyId == companyId), specification, evaluateCriteriaOnly);
+
+        protected override IQueryable<TResult> ApplySpecification<TResult>(ISpecification<Store, TResult> specification)
+            => SpecificationEvaluator.GetQuery(DbContext.Set<Store>().Where(s => s.CompanyId == companyId), specification);
+    }
+
     [Fact]
     public async Task SingleKey_AggregatesAndFlags_WorkAcrossRepositoryAndDbSet()
     {
@@ -159,7 +173,7 @@ public class Repository_GroupByTests(TestFactory factory) : IntegrationTest(fact
     }
 
     [Fact]
-    public async Task ConflictsAndInterimGuards_ThrowExpectedExceptions()
+    public async Task Conflicts_ThrowExpectedExceptions()
     {
         var repo = new Repository<Country>(DbContext);
 
@@ -183,21 +197,12 @@ public class Repository_GroupByTests(TestFactory factory) : IntegrationTest(fact
         var preTake = new Specification<Country, string?>();
         preTake.Query.Take(1).GroupBy(c => c.Name).Select(g => g.Key);
 
-        var distinctGrouped = new Specification<Country, string?>();
-        distinctGrouped.Query.Distinct().GroupBy(c => c.Name).Select(g => g.Key);
-
-        var validGrouped = new Specification<Country, string?>();
-        validGrouped.Query.GroupBy(c => c.Name).Select(g => g.Key);
-
         await FluentActions.Awaiting(() => repo.ListAsync(missingSelect)).Should().ThrowAsync<SelectorNotFoundException>();
         await FluentActions.Awaiting(() => repo.ListAsync(mixedSelect)).Should().ThrowAsync<ConcurrentSelectorsException>();
         await FluentActions.Awaiting(() => repo.ListAsync(mixedSelectMany)).Should().ThrowAsync<ConcurrentSelectorsException>();
         await FluentActions.Awaiting(() => repo.ListAsync(preOrder)).Should().ThrowAsync<NotSupportedException>();
         await FluentActions.Awaiting(() => repo.ListAsync(preSkip)).Should().ThrowAsync<NotSupportedException>();
         await FluentActions.Awaiting(() => repo.ListAsync(preTake)).Should().ThrowAsync<NotSupportedException>();
-        await FluentActions.Awaiting(() => repo.ListAsync(distinctGrouped)).Should().ThrowAsync<NotSupportedException>();
-        await FluentActions.Awaiting(() => repo.PagedListAsync(validGrouped, new PagingFilter { Page = 1, PageSize = 2 })).Should().ThrowAsync<NotSupportedException>();
-        await FluentActions.Awaiting(() => DbContext.Countries.ToPagedListAsync(validGrouped, new PagingFilter { Page = 1, PageSize = 2 })).Should().ThrowAsync<NotSupportedException>();
     }
 
     [Fact]
@@ -393,6 +398,273 @@ public class Repository_GroupByTests(TestFactory factory) : IntegrationTest(fact
 
         (await repo.ListAsync(composed)).Should().Equal("Grp-A", "Grp-B");
         await FluentActions.Awaiting(() => repo.ListAsync(template)).Should().ThrowAsync<DuplicateOrderChainException>();
+    }
+
+    [Fact]
+    public async Task GroupSkipTakeAndPostGroupDistinct_WorkAcrossSurfaces_AndRejectOrderByWithDistinct()
+    {
+        var companyIds = await SeedStoresForHavingAndOrderingAsync();
+        var repo = new Repository<Store>(DbContext);
+
+        var sqlCommands = new List<string>();
+        DbContext.Database.Log = msg => { if (msg.Contains("SELECT", StringComparison.OrdinalIgnoreCase)) sqlCommands.Add(msg); };
+
+        var preSliceSpec = new Specification<Store, StoreAggregate>();
+        preSliceSpec.Query
+            .GroupBy(s => new { s.CompanyId, s.City })
+            .OrderByDescending(g => g.Count())
+            .ThenBy(g => g.Key.CompanyId)
+            .ThenBy(g => g.Key.City)
+            .Skip(99, false)
+            .Take(0, false)
+            .Skip(1)
+            .Take(2)
+            .Select(g => new StoreAggregate { CompanyId = g.Key.CompanyId, City = g.Key.City, Count = g.Count() });
+
+        var postSliceSpec = new Specification<Store, StoreAggregate>();
+        postSliceSpec.Query
+            .GroupBy(s => new { s.CompanyId, s.City })
+            .OrderByDescending(g => g.Count())
+            .ThenBy(g => g.Key.CompanyId)
+            .ThenBy(g => g.Key.City)
+            .Select(g => new StoreAggregate { CompanyId = g.Key.CompanyId, City = g.Key.City, Count = g.Count() })
+            .Skip(1)
+            .Take(2);
+
+        var skipZeroSpec = new Specification<Store, string>();
+        skipZeroSpec.Query
+            .GroupBy(s => new { s.CompanyId, s.City })
+            .OrderByDescending(g => g.Count())
+            .ThenBy(g => g.Key.CompanyId)
+            .Skip(0)
+            .Select(g => g.Key.City!);
+
+        var takeZeroSpec = new Specification<Store, string>();
+        takeZeroSpec.Query
+            .GroupBy(s => new { s.CompanyId, s.City })
+            .OrderByDescending(g => g.Count())
+            .Select(g => g.Key.City!)
+            .Take(0);
+
+        var expectedSlice = new[]
+        {
+            new StoreAggregate { CompanyId = companyIds.Alpha, City = "Austin", Count = 2 },
+            new StoreAggregate { CompanyId = companyIds.Alpha, City = "Dallas", Count = 1 },
+        };
+
+        (await repo.ListAsync(preSliceSpec)).Should().BeEquivalentTo(expectedSlice, o => o.WithStrictOrdering());
+        (await repo.ListAsync(postSliceSpec)).Should().BeEquivalentTo(expectedSlice, o => o.WithStrictOrdering());
+        (await DbContext.Stores.ToListAsync(preSliceSpec)).Should().BeEquivalentTo(expectedSlice, o => o.WithStrictOrdering());
+
+        sqlCommands.Clear();
+        (await repo.ListAsync(skipZeroSpec)).Should().HaveCount(4);
+        sqlCommands.Should().OnlyContain(c => !c.Contains("OFFSET", StringComparison.OrdinalIgnoreCase) && !c.Contains("ROW_NUMBER", StringComparison.OrdinalIgnoreCase));
+        (await repo.ListAsync(takeZeroSpec)).Should().BeEmpty();
+
+        // Post-group Distinct() and pre-GroupBy Query.Distinct() deduplicate {3, 2, 1, 1} -> {1, 2, 3}.
+        var postDistinctSpec = new Specification<Store, int>();
+        postDistinctSpec.Query
+            .GroupBy(s => new { s.CompanyId, s.City })
+            .Select(g => g.Count())
+            .Distinct();
+
+        var preDistinctSpec = new Specification<Store, int>();
+        preDistinctSpec.Query
+            .Distinct()
+            .GroupBy(s => new { s.CompanyId, s.City })
+            .Select(g => g.Count());
+
+        var distinctFalseSpec = new Specification<Store, int>();
+        distinctFalseSpec.Query
+            .GroupBy(s => new { s.CompanyId, s.City })
+            .Select(g => g.Count())
+            .Distinct(false);
+
+        var distinctThenTakeSpec = new Specification<Store, int>();
+        distinctThenTakeSpec.Query
+            .GroupBy(s => new { s.CompanyId, s.City })
+            .Select(g => g.Count())
+            .Distinct()
+            .Take(4);
+
+        var inactiveOrderDistinctSpec = new Specification<Store, int>();
+        inactiveOrderDistinctSpec.Query
+            .GroupBy(s => new { s.CompanyId, s.City })
+            .OrderBy(g => g.Key.City, false)
+            .Select(g => g.Count())
+            .Distinct();
+
+        (await repo.ListAsync(postDistinctSpec)).OrderBy(x => x).Should().Equal(1, 2, 3);
+        (await repo.ListAsync(preDistinctSpec)).OrderBy(x => x).Should().Equal(1, 2, 3);
+        (await repo.ListAsync(distinctFalseSpec)).OrderBy(x => x).Should().Equal(1, 1, 2, 3);
+        (await repo.ListAsync(distinctThenTakeSpec)).Should().HaveCount(3);
+        (await repo.ListAsync(inactiveOrderDistinctSpec)).OrderBy(x => x).Should().Equal(1, 2, 3);
+
+        // Active group OrderBy + Distinct throws NotSupportedException with 0 SQL.
+        var orderDistinctPost = new Specification<Store, int>();
+        orderDistinctPost.Query.GroupBy(s => s.City).OrderBy(g => g.Key).Select(g => g.Count()).Distinct();
+
+        var orderDistinctPre = new Specification<Store, int>();
+        orderDistinctPre.Query.Distinct().GroupBy(s => s.City).OrderByDescending(g => g.Count()).Select(g => g.Count());
+
+        sqlCommands.Clear();
+        await FluentActions.Awaiting(() => repo.ListAsync(orderDistinctPost)).Should().ThrowAsync<NotSupportedException>();
+        await FluentActions.Awaiting(() => repo.ListAsync(orderDistinctPre)).Should().ThrowAsync<NotSupportedException>();
+        sqlCommands.Should().BeEmpty();
+
+        // WithProjectionOf clones group Skip/Take and IsDistinct without state leakage.
+        var source = new Specification<Store>();
+        source.Query.Where(s => s.Id > 0);
+
+        var sliceTemplate = new Specification<Store, StoreAggregate>();
+        var sliceResult = sliceTemplate.Query
+            .GroupBy(s => new { s.CompanyId, s.City })
+            .OrderByDescending(g => g.Count())
+            .ThenBy(g => g.Key.CompanyId)
+            .ThenBy(g => g.Key.City)
+            .Skip(1)
+            .Select(g => new StoreAggregate { CompanyId = g.Key.CompanyId, City = g.Key.City, Count = g.Count() });
+
+        var composedSlice = source.WithProjectionOf(sliceTemplate);
+        sliceResult.Take(1);
+
+        (await repo.ListAsync(composedSlice)).Should().HaveCount(3);
+        (await repo.ListAsync(sliceTemplate)).Should().HaveCount(1);
+
+        var composedDistinct = source.WithProjectionOf(postDistinctSpec);
+        composedDistinct.IsDistinct.Should().BeTrue();
+        (await repo.ListAsync(composedDistinct)).OrderBy(x => x).Should().Equal(1, 2, 3);
+    }
+
+    [Fact]
+    public async Task PagedListAsyncAndToPagedListAsync_PageOrderedGroupedSpecs_AndFailFastForUnorderedOrDistinct()
+    {
+        var companyIds = await SeedStoresForHavingAndOrderingAsync();
+        var repo = new Repository<Store>(DbContext);
+        var smallPageRepo = new SmallPageStoreRepository(DbContext);
+        var scopedRepo = new CompanyScopedStoreRepository(DbContext, companyIds.Alpha);
+
+        var sqlCommands = new List<string>();
+        DbContext.Database.Log = msg => { if (msg.Contains("SELECT", StringComparison.OrdinalIgnoreCase)) sqlCommands.Add(msg); };
+
+        // EnsurePageable rejects group Skip > 0 or Take >= 0 with 0 SQL; Skip(0) remains pageable.
+        var preSkip = new Specification<Store, string>();
+        preSkip.Query.GroupBy(s => s.City).OrderBy(g => g.Key).Skip(1).Select(g => g.Key!);
+        var postTakeZero = new Specification<Store, string>();
+        postTakeZero.Query.GroupBy(s => s.City).OrderBy(g => g.Key).Select(g => g.Key!).Take(0);
+        var skipZero = new Specification<Store, string>();
+        skipZero.Query.GroupBy(s => s.City).OrderBy(g => g.Key).Skip(0).Select(g => g.Key!);
+
+        sqlCommands.Clear();
+        await FluentActions.Awaiting(() => repo.PagedListAsync(preSkip, new PagingFilter { Page = 1, PageSize = 2 }))
+            .Should().ThrowAsync<ArgumentException>().WithParameterName("specification");
+        await FluentActions.Awaiting(() => DbContext.Stores.ToPagedListAsync(postTakeZero, new PagingFilter { Page = 1, PageSize = 2 }))
+            .Should().ThrowAsync<ArgumentException>().WithParameterName("specification");
+
+        // Unordered and Distinct grouped specs fail fast on BOTH page 1 and page 2 with 0 SQL.
+        var unorderedSpec = new Specification<Store, string>();
+        unorderedSpec.Query.GroupBy(s => s.City).Select(g => g.Key!);
+
+        var inactiveOrderSpec = new Specification<Store, string>();
+        inactiveOrderSpec.Query.GroupBy(s => s.City).OrderBy(g => g.Key, false).Select(g => g.Key!);
+
+        var postDistinctSpec = new Specification<Store, int>();
+        postDistinctSpec.Query.GroupBy(s => s.City).Select(g => g.Count()).Distinct();
+
+        var preDistinctSpec = new Specification<Store, int>();
+        preDistinctSpec.Query.Distinct().GroupBy(s => s.City).Select(g => g.Count());
+
+        foreach (var page in new[] { 1, 2 })
+        {
+            await FluentActions.Awaiting(() => repo.PagedListAsync(unorderedSpec, new PagingFilter { Page = page, PageSize = 2 }))
+                .Should().ThrowAsync<NotSupportedException>();
+            await FluentActions.Awaiting(() => DbContext.Stores.ToPagedListAsync(unorderedSpec, new PagingFilter { Page = page, PageSize = 2 }))
+                .Should().ThrowAsync<NotSupportedException>();
+            await FluentActions.Awaiting(() => repo.PagedListAsync(inactiveOrderSpec, new PagingFilter { Page = page, PageSize = 2 }))
+                .Should().ThrowAsync<NotSupportedException>();
+            await FluentActions.Awaiting(() => repo.PagedListAsync(postDistinctSpec, new PagingFilter { Page = page, PageSize = 2 }))
+                .Should().ThrowAsync<NotSupportedException>();
+            await FluentActions.Awaiting(() => DbContext.Stores.ToPagedListAsync(preDistinctSpec, new PagingFilter { Page = page, PageSize = 2 }))
+                .Should().ThrowAsync<NotSupportedException>();
+        }
+        sqlCommands.Should().BeEmpty();
+
+        var skipZeroPage = await repo.PagedListAsync(skipZero, new PagingFilter { Page = 1, PageSize = 2 });
+        skipZeroPage.Pagination.TotalItems.Should().Be(3);
+        skipZeroPage.Items.Should().Equal("Austin", "Dallas");
+
+        // Ordered, non-Distinct grouped spec on page 1, page 2, clamped page 99, ignoring PostProcessingAction.
+        var orderedSpec = new Specification<Store, StoreAggregate>();
+        orderedSpec.Query
+            .GroupBy(s => new { s.CompanyId, s.City })
+            .OrderByDescending(g => g.Count())
+            .ThenBy(g => g.Key.CompanyId)
+            .ThenBy(g => g.Key.City)
+            .Select(g => new StoreAggregate { CompanyId = g.Key.CompanyId, City = g.Key.City, Count = g.Count() })
+            .PostProcessingAction(items => items.Reverse());
+
+        var p1 = await repo.PagedListAsync(orderedSpec, new PagingFilter { Page = 1, PageSize = 2 });
+        var p2 = await repo.PagedListAsync(orderedSpec, new PagingFilter { Page = 2, PageSize = 2 });
+        var pClamped = await repo.PagedListAsync(orderedSpec, new PagingFilter { Page = 99, PageSize = 2 });
+        var p2DbSet = await DbContext.Stores.ToPagedListAsync(orderedSpec, new PagingFilter { Page = 2, PageSize = 2 });
+        var pSmall = await smallPageRepo.PagedListAsync(orderedSpec, new PagingFilter { Page = 1 });
+        var pScoped1 = await scopedRepo.PagedListAsync(orderedSpec, new PagingFilter { Page = 1, PageSize = 1 });
+        var pScoped2 = await scopedRepo.PagedListAsync(orderedSpec, new PagingFilter { Page = 2, PageSize = 1 });
+
+        p1.Items.Should().BeEquivalentTo(
+        [
+            new StoreAggregate { CompanyId = companyIds.Beta, City = "Denver", Count = 3 },
+            new StoreAggregate { CompanyId = companyIds.Alpha, City = "Austin", Count = 2 },
+        ], o => o.WithStrictOrdering());
+        p1.Pagination.Should().BeEquivalentTo(new Pagination(1, 2, 4, 2, false, true));
+
+        p2.Items.Should().BeEquivalentTo(
+        [
+            new StoreAggregate { CompanyId = companyIds.Alpha, City = "Dallas", Count = 1 },
+            new StoreAggregate { CompanyId = companyIds.Beta, City = "Austin", Count = 1 },
+        ], o => o.WithStrictOrdering());
+        p2.Pagination.Should().BeEquivalentTo(new Pagination(2, 2, 4, 2, true, false));
+        pClamped.Items.Should().BeEquivalentTo(p2.Items, o => o.WithStrictOrdering());
+        pClamped.Pagination.Page.Should().Be(2);
+        p2DbSet.Items.Should().BeEquivalentTo(p2.Items, o => o.WithStrictOrdering());
+        p2DbSet.Pagination.TotalItems.Should().Be(4);
+        pSmall.Pagination.Should().BeEquivalentTo(new Pagination(1, 2, 4, 2, false, true));
+
+        pScoped1.Items.Should().ContainSingle().Which.City.Should().Be("Austin");
+        pScoped1.Pagination.Should().BeEquivalentTo(new Pagination(1, 1, 2, 2, false, true));
+        pScoped2.Items.Should().ContainSingle().Which.City.Should().Be("Dallas");
+        pScoped2.Pagination.Should().BeEquivalentTo(new Pagination(2, 1, 2, 2, true, false));
+
+        // Having-filtered grouped spec (2 surviving groups).
+        var havingSpec = new Specification<Store, StoreAggregate>();
+        havingSpec.Query
+            .GroupBy(s => new { s.CompanyId, s.City })
+            .Having(g => g.Count() >= 2)
+            .OrderByDescending(g => g.Count())
+            .Select(g => new StoreAggregate { CompanyId = g.Key.CompanyId, City = g.Key.City, Count = g.Count() });
+
+        var pHaving = await repo.PagedListAsync(havingSpec, new PagingFilter { Page = 2, PageSize = 1 });
+        pHaving.Items.Should().ContainSingle().Which.Should().BeEquivalentTo(new StoreAggregate { CompanyId = companyIds.Alpha, City = "Austin", Count = 2 });
+        pHaving.Pagination.Should().BeEquivalentTo(new Pagination(2, 1, 2, 2, true, false));
+
+        // Search-filtered grouped spec (cities starting with "D": Beta/Denver Count=3, Alpha/Dallas Count=1).
+        var searchPagedSpec = new Specification<Store, StoreAggregate>();
+        searchPagedSpec.Query
+            .Search(s => s.City!, "D%")
+            .GroupBy(s => new { s.CompanyId, s.City })
+            .OrderByDescending(g => g.Count())
+            .Select(g => new StoreAggregate { CompanyId = g.Key.CompanyId, City = g.Key.City, Count = g.Count() });
+
+        var pSearch = await repo.PagedListAsync(searchPagedSpec, new PagingFilter { Page = 2, PageSize = 1 });
+        pSearch.Items.Should().ContainSingle().Which.Should().BeEquivalentTo(new StoreAggregate { CompanyId = companyIds.Alpha, City = "Dallas", Count = 1 });
+        pSearch.Pagination.Should().BeEquivalentTo(new Pagination(2, 1, 2, 2, true, false));
+
+        // Empty result grouped spec.
+        var emptySpec = new Specification<Store, string>();
+        emptySpec.Query.Where(s => s.Id < 0).GroupBy(s => s.City).OrderBy(g => g.Key).Select(g => g.Key!);
+        var pEmpty = await repo.PagedListAsync(emptySpec, new PagingFilter { Page = 2, PageSize = 2 });
+        pEmpty.Items.Should().BeEmpty();
+        pEmpty.Pagination.Should().BeEquivalentTo(new Pagination(1, 2, 0, 1, false, false));
     }
 
     private async Task<(int Alpha, int Beta)> SeedStoresForHavingAndOrderingAsync()

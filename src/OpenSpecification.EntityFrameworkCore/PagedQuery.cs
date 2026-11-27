@@ -21,7 +21,8 @@ internal static class PagedQuery
     }
 
     // A projection's total counts the rows its pages hold: one per entity for Select, the flattened rows for
-    // SelectMany, and the deduplicated projected rows when Distinct() is enabled.
+    // SelectMany, surviving groups (or distinct projected group results) for GroupBy, and deduplicated projected rows
+    // when Distinct() is enabled.
     internal static Task<PagedResult<TResult>> ToPagedResultAsync<T, TResult>(
       IQueryable<T> criteriaQuery,
       IQueryable<TResult> pageQuery,
@@ -30,9 +31,11 @@ internal static class PagedQuery
       PaginationSettings settings,
       CancellationToken cancellationToken)
     {
-        if (GroupByHelper.GetPlan(specification) is not null)
+        if (GroupByHelper.GetPlan(specification) is { } groupByPlan)
         {
-            throw new NotSupportedException("Paging grouped specifications is not yet supported.");
+            return DistinctEvaluator.IsDistinctSpecification(specification)
+                ? ToPagedResultAsync(groupByPlan.ApplyDistinctCount(criteriaQuery), pageQuery, filter, settings, cancellationToken)
+                : ToPagedResultAsync(groupByPlan.ApplyCount(criteriaQuery), pageQuery, filter, settings, cancellationToken);
         }
 
         if (DistinctEvaluator.IsDistinctSpecification(specification))
