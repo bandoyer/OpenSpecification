@@ -174,8 +174,9 @@ public static class DbSetExtensions
     /// <see cref="Pagination.Create"/> says.
     /// <para>
     /// The count evaluates the criteria only, as CountAsync does, and counts one result per entity for a Select. EF6
-    /// can't page a SelectMany specification, since it can't Skip rows a specification can't order. The page applies the rest of the specification too,
-    /// except its PostProcessingAction, which a paged query ignores so the page agrees with the count.
+    /// can't page a SelectMany or Distinct projection specification, since it can't Skip rows a specification can't order. The page applies the rest of the
+    /// specification too, except its PostProcessingAction, which a paged query ignores so the page agrees with the
+    /// count.
     /// </para>
     /// </summary>
     /// <typeparam name="TSource">The type of the entities.</typeparam>
@@ -188,7 +189,7 @@ public static class DbSetExtensions
     /// <exception cref="ArgumentNullException">If <paramref name="specification"/> or <paramref name="filter"/> is null.</exception>
     /// <exception cref="ArgumentException">If <paramref name="specification"/> has Skip or Take.</exception>
     /// <remarks>The default page size and the page size limit are <see cref="PaginationSettings.Default"/>'s.</remarks>
-    /// <exception cref="NotSupportedException">If <paramref name="specification"/> has a SelectMany, which EF6 can\'t page.</exception>
+    /// <exception cref="NotSupportedException">If <paramref name="specification"/> has a SelectMany or Distinct projection, which EF6 can't page.</exception>
     public static Task<PagedResult<TResult>> ToPagedListAsync<TSource, TResult>(
       this DbSet<TSource> source,
       ISpecification<TSource, TResult> specification,
@@ -205,8 +206,9 @@ public static class DbSetExtensions
     /// <see cref="Pagination.Create"/> says.
     /// <para>
     /// The count evaluates the criteria only, as CountAsync does, and counts one result per entity for a Select. EF6
-    /// can't page a SelectMany specification, since it can't Skip rows a specification can't order. The page applies the rest of the specification too,
-    /// except its PostProcessingAction, which a paged query ignores so the page agrees with the count.
+    /// can't page a SelectMany or Distinct projection specification, since it can't Skip rows a specification can't order. The page applies the rest of the
+    /// specification too, except its PostProcessingAction, which a paged query ignores so the page agrees with the
+    /// count.
     /// </para>
     /// </summary>
     /// <typeparam name="TSource">The type of the entities.</typeparam>
@@ -219,7 +221,7 @@ public static class DbSetExtensions
     /// <returns>A task whose result contains the page and its details.</returns>
     /// <exception cref="ArgumentNullException">If <paramref name="specification"/>, <paramref name="filter"/> or <paramref name="settings"/> is null.</exception>
     /// <exception cref="ArgumentException">If <paramref name="specification"/> has Skip or Take.</exception>
-    /// <exception cref="NotSupportedException">If <paramref name="specification"/> has a SelectMany, which EF6 can\'t page.</exception>
+    /// <exception cref="NotSupportedException">If <paramref name="specification"/> has a SelectMany or Distinct projection, which EF6 can't page.</exception>
     public static async Task<PagedResult<TResult>> ToPagedListAsync<TSource, TResult>(
       this DbSet<TSource> source,
       ISpecification<TSource, TResult> specification,

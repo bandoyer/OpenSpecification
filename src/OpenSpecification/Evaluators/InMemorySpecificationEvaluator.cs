@@ -26,6 +26,7 @@ public class InMemorySpecificationEvaluator : IInMemorySpecificationEvaluator
         [
             WhereEvaluator.Instance,
             SearchMemoryEvaluator.Instance,
+            DistinctEvaluator.Instance,
             OrderEvaluator.Instance,
             PaginationEvaluator.Instance
         ];
@@ -46,6 +47,31 @@ public class InMemorySpecificationEvaluator : IInMemorySpecificationEvaluator
     {
         if (specification.Selector is null && specification.SelectorMany is null) throw new SelectorNotFoundException();
         if (specification.Selector != null && specification.SelectorMany != null) throw new ConcurrentSelectorsException();
+
+        if (DistinctEvaluator.IsDistinctSpecification(specification))
+        {
+            DistinctEvaluator.ThrowIfOrderedProjection(specification);
+
+            var criteriaSource = source;
+            foreach (var evaluator in Evaluators)
+            {
+                if (evaluator is IEvaluator { IsCriteriaEvaluator: false } or DistinctEvaluator)
+                    continue;
+
+                criteriaSource = evaluator.Evaluate(criteriaSource, specification);
+            }
+
+            if (((ISpecification<T>)specification).PostProcessingAction is { } entityPostProcessing)
+            {
+                criteriaSource = entityPostProcessing(criteriaSource);
+            }
+
+            var distinctQuery = DistinctEvaluator.ApplyDistinctProjection(criteriaSource, specification);
+
+            return specification.PostProcessingAction is null
+                ? distinctQuery
+                : specification.PostProcessingAction(distinctQuery);
+        }
 
         var baseQuery = Evaluate(source, (ISpecification<T>)specification);
 

@@ -23,6 +23,7 @@ public static class SpecificationExtensions
         newSpec.Selector = projectionSpec.Selector;
         newSpec.SelectorMany = projectionSpec.SelectorMany;
         newSpec.PostProcessingAction = projectionSpec.PostProcessingAction;
+        newSpec.IsDistinct = projectionSpec.IsDistinct;
         return newSpec;
     }
 }

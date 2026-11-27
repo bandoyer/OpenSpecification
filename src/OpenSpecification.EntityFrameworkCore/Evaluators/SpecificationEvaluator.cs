@@ -18,6 +18,7 @@ public class SpecificationEvaluator : ISpecificationEvaluator
         [
             WhereEvaluator.Instance,
             SearchEvaluator.Instance,
+            DistinctEvaluator.Instance,
             IncludeStringEvaluator.Instance,
             IncludeEvaluator.Instance,
             OrderEvaluator.Instance,
@@ -43,6 +44,13 @@ public class SpecificationEvaluator : ISpecificationEvaluator
         ArgumentNullException.ThrowIfNull(specification);
         if (specification.Selector is null && specification.SelectorMany is null) throw new SelectorNotFoundException();
         if (specification.Selector is not null && specification.SelectorMany is not null) throw new ConcurrentSelectorsException();
+
+        if (DistinctEvaluator.IsDistinctSpecification(specification))
+        {
+            DistinctEvaluator.ThrowIfOrderedProjection(specification);
+            query = GetQuery(query, (ISpecification<T>)specification, evaluateCriteriaOnly: true);
+            return DistinctEvaluator.ApplyDistinctProjection(query, specification);
+        }
 
         query = GetQuery(query, (ISpecification<T>)specification);
 

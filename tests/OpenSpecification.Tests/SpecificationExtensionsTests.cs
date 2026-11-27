@@ -85,4 +85,24 @@ public class SpecificationExtensionsTests
         newSpec.QueryTags.Should().NotBeSameAs(spec.QueryTags);
         newSpec.QueryTags.Should().Equal(spec.QueryTags);
     }
+
+    [Fact]
+    public void WithProjectionOf_SetsIsDistinctFromProjectionSpec()
+    {
+        var distinctSource = new Specification<Person>();
+        distinctSource.Query.Distinct();
+
+        var nonDistinctSource = new Specification<Person>();
+
+        var distinctProjection = new Specification<Person, string>();
+        distinctProjection.Query.Distinct().Select(x => x.Name);
+
+        var nonDistinctProjection = new Specification<Person, string>();
+        nonDistinctProjection.Query.Select(x => x.Name);
+
+        nonDistinctSource.WithProjectionOf(distinctProjection).IsDistinct.Should().BeTrue();
+        distinctSource.WithProjectionOf(nonDistinctProjection).IsDistinct.Should().BeFalse();
+        distinctSource.WithProjectionOf(distinctProjection).IsDistinct.Should().BeTrue();
+        nonDistinctSource.WithProjectionOf(nonDistinctProjection).IsDistinct.Should().BeFalse();
+    }
 }

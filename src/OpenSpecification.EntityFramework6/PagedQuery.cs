@@ -21,10 +21,10 @@ internal static class PagedQuery
         return new PagedResult<TResult>(items, pagination);
     }
 
-    // A projection's total counts the rows its pages hold, one per entity for Select. EF6 can't page a SelectMany: it
-    // refuses Skip on rows that aren't ordered, and a specification can order only the entities, never the rows
-    // SelectMany flattens out of them. So the method refuses it before any query, on every page, rather than serving
-    // page 1 and failing on page 2.
+    // A projection's total counts the rows its pages hold, one per entity for Select. EF6 can't page a SelectMany or
+    // a Distinct projection: it refuses Skip on rows that aren't ordered, and a specification can order only the
+    // entities, never flattened or distinct projected rows. So the method refuses them before any query, on every
+    // page, rather than serving page 1 and failing on page 2.
     internal static Task<PagedResult<TResult>> ToPagedResultAsync<T, TResult>(
       IQueryable<T> criteriaQuery,
       IQueryable<TResult> pageQuery,
@@ -35,6 +35,9 @@ internal static class PagedQuery
     {
         if (specification.SelectorMany is not null)
             throw new NotSupportedException("EF6 can't page a SelectMany specification, since it can't Skip the flattened rows, which a specification can't order. Use a Select specification, or page the entities.");
+
+        if (DistinctEvaluator.IsDistinctSpecification(specification))
+            throw new NotSupportedException("EF6 can't page a Distinct projection specification, since it can't Skip distinct projected rows without ordering them. Page the entities, or evaluate the distinct projection without paging.");
 
         return ToPagedResultAsync(criteriaQuery, pageQuery, filter, settings, cancellationToken);
     }

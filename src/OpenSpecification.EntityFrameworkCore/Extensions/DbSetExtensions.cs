@@ -189,7 +189,7 @@ public static class DbSetExtensions
     /// <see cref="Pagination.Create"/> says.
     /// <para>
     /// The count evaluates the criteria only, as CountAsync does. For a SelectMany, it counts the flattened results,
-    /// which are what the pages hold. The page applies the rest of the specification too,
+    /// and when Distinct is enabled it counts the distinct projected results, which are what the pages hold. The page applies the rest of the specification too,
     /// except its PostProcessingAction, which a paged query ignores so the page agrees with the count.
     /// </para>
     /// </summary>
@@ -219,7 +219,7 @@ public static class DbSetExtensions
     /// <see cref="Pagination.Create"/> says.
     /// <para>
     /// The count evaluates the criteria only, as CountAsync does. For a SelectMany, it counts the flattened results,
-    /// which are what the pages hold. The page applies the rest of the specification too,
+    /// and when Distinct is enabled it counts the distinct projected results, which are what the pages hold. The page applies the rest of the specification too,
     /// except its PostProcessingAction, which a paged query ignores so the page agrees with the count.
     /// </para>
     /// </summary>
