@@ -226,13 +226,141 @@ public class InMemorySpecificationEvaluatorTests
         var evaluator = new SpecificationEvaluatorDerived();
 
         var result = EvaluatorsOf(evaluator);
-        result.Should().HaveCount(6);
+        result.Should().HaveCount(7);
         result[0].Should().BeOfType<SearchMemoryEvaluator>();
         result[1].Should().BeOfType<WhereEvaluator>();
         result[2].Should().BeOfType<SearchMemoryEvaluator>();
-        result[3].Should().BeOfType<OrderEvaluator>();
-        result[4].Should().BeOfType<PaginationEvaluator>();
-        result[5].Should().BeOfType<WhereEvaluator>();
+        result[3].Should().BeOfType<DistinctEvaluator>();
+        result[4].Should().BeOfType<OrderEvaluator>();
+        result[5].Should().BeOfType<PaginationEvaluator>();
+        result[6].Should().BeOfType<WhereEvaluator>();
+    }
+
+    [Fact]
+    public void Evaluate_DeduplicatesEntityBeforeOrderAndPaging_GivenEntityDistinctSpec()
+    {
+        List<Customer> input =
+        [
+            new(3, "c", "xy"),
+            new(1, "a", "xy"),
+            new(2, "b", "xy"),
+            new(1, "a", "xy"),
+            new(3, "c", "xy"),
+            new(4, "d", "zz"),
+        ];
+
+        var spec = new Specification<Customer>();
+        spec.Query
+            .Where(x => x.Id > 0)
+            .Search(x => x.LastName, "%xy%")
+            .Distinct()
+            .OrderBy(x => x.Id)
+            .Skip(1)
+            .Take(2);
+
+        var actual = spec.Evaluate(input).ToList();
+
+        actual.Should().Equal([new Customer(2, "b", "xy"), new Customer(3, "c", "xy")]);
+    }
+
+    [Fact]
+    public void Evaluate_DeduplicatesValueTypes_GivenEntityDistinctSpec()
+    {
+        var spec = new Specification<int>();
+        spec.Query
+            .Where(x => x > 0)
+            .Distinct()
+            .OrderBy(x => x);
+
+        var actual = spec.Evaluate([3, 1, 2, 1, 3, -5]).ToList();
+
+        actual.Should().Equal([1, 2, 3]);
+    }
+
+    [Fact]
+    public void Evaluate_DeduplicatesAfterSelectAndBeforeSkipTakeAndPostProcessing()
+    {
+        List<Customer> input =
+        [
+            new(1, "dup", "xy"),
+            new(2, "dup", "xy"),
+            new(3, "mid", "xy"),
+            new(4, "end", "xy"),
+            new(5, "end", "xy"),
+        ];
+
+        var spec = new Specification<Customer, string>();
+        spec.Query
+            .Distinct()
+            .Skip(1)
+            .Take(2)
+            .PostProcessingAction(items => items.Select(x => x.ToUpperInvariant()))
+            .Select(x => x.FirstName);
+
+        var actual = spec.Evaluate(input).ToList();
+
+        actual.Should().Equal(["MID", "END"]);
+    }
+
+    [Fact]
+    public void Evaluate_DeduplicatesAfterSelectManyAndBeforeSkipTakeAndPostProcessing()
+    {
+        List<CustomerWithMails> input =
+        [
+            new(1, "a", "xy", ["m1", "m2"]),
+            new(2, "b", "xy", ["m2", "m3"]),
+            new(3, "c", "xy", ["m3", "m4"]),
+        ];
+
+        var spec = new Specification<CustomerWithMails, string>();
+        spec.Query
+            .Distinct()
+            .Skip(1)
+            .Take(2)
+            .PostProcessingAction(items => items.Select(x => $"*{x}"))
+            .SelectMany(x => x.Emails);
+
+        var actual = spec.Evaluate(input).ToList();
+
+        actual.Should().Equal(["*m2", "*m3"]);
+    }
+
+    [Fact]
+    public void Evaluate_ThrowsNotSupportedException_GivenOrderByWithDistinctSelectProjection()
+    {
+        var spec = new Specification<Customer, string>();
+        spec.Query
+            .OrderBy(x => x.Id)
+            .Distinct()
+            .Select(x => x.FirstName);
+
+        var sut = () => _evaluator.Evaluate([], spec).ToList();
+
+        sut.Should().Throw<NotSupportedException>();
+    }
+
+    [Fact]
+    public void Evaluate_ThrowsNotSupportedException_GivenOrderByWithDistinctSelectManyProjection()
+    {
+        var spec = new Specification<CustomerWithMails, string>();
+        spec.Query
+            .OrderByDescending(x => x.Id)
+            .Distinct()
+            .SelectMany(x => x.Emails);
+
+        var sut = () => _evaluator.Evaluate([], spec).ToList();
+
+        sut.Should().Throw<NotSupportedException>();
+    }
+
+    [Fact]
+    public void IsSatisfiedBy_RemainsEntityCriteriaOnly_GivenDistinctSpec()
+    {
+        var spec = new Specification<Customer, string>();
+        spec.Query.Where(x => x.Id > 1).Distinct().Select(x => x.FirstName);
+
+        spec.IsSatisfiedBy(new Customer(2, "a", "b")).Should().BeTrue();
+        spec.IsSatisfiedBy(new Customer(1, "a", "b")).Should().BeFalse();
     }
 
     private class SpecificationEvaluatorDerived : InMemorySpecificationEvaluator

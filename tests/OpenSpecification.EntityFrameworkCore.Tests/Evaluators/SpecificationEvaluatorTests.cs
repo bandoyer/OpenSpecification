@@ -345,22 +345,167 @@ public class SpecificationEvaluatorTests(TestFactory factory) : IntegrationTest(
         var evaluator = new SpecificationEvaluatorDerived();
 
         var result = EvaluatorsOf(evaluator);
-        result.Should().HaveCount(15);
+        result.Should().HaveCount(16);
         result[0].Should().BeOfType<SearchEvaluator>();
         result[1].Should().BeOfType<WhereEvaluator>();
         result[2].Should().BeOfType<SearchEvaluator>();
-        result[3].Should().BeOfType<IncludeStringEvaluator>();
-        result[4].Should().BeOfType<IncludeEvaluator>();
-        result[5].Should().BeOfType<OrderEvaluator>();
-        result[6].Should().BeOfType<PaginationEvaluator>();
-        result[7].Should().BeOfType<AsNoTrackingEvaluator>();
-        result[8].Should().BeOfType<AsNoTrackingWithIdentityResolutionEvaluator>();
-        result[9].Should().BeOfType<AsTrackingEvaluator>();
-        result[10].Should().BeOfType<IgnoreQueryFiltersEvaluator>();
-        result[11].Should().BeOfType<IgnoreAutoIncludesEvaluator>();
-        result[12].Should().BeOfType<AsSplitQueryEvaluator>();
-        result[13].Should().BeOfType<QueryTagEvaluator>();
-        result[14].Should().BeOfType<WhereEvaluator>();
+        result[3].Should().BeOfType<DistinctEvaluator>();
+        result[4].Should().BeOfType<IncludeStringEvaluator>();
+        result[5].Should().BeOfType<IncludeEvaluator>();
+        result[6].Should().BeOfType<OrderEvaluator>();
+        result[7].Should().BeOfType<PaginationEvaluator>();
+        result[8].Should().BeOfType<AsNoTrackingEvaluator>();
+        result[9].Should().BeOfType<AsNoTrackingWithIdentityResolutionEvaluator>();
+        result[10].Should().BeOfType<AsTrackingEvaluator>();
+        result[11].Should().BeOfType<IgnoreQueryFiltersEvaluator>();
+        result[12].Should().BeOfType<IgnoreAutoIncludesEvaluator>();
+        result[13].Should().BeOfType<AsSplitQueryEvaluator>();
+        result[14].Should().BeOfType<QueryTagEvaluator>();
+        result[15].Should().BeOfType<WhereEvaluator>();
+    }
+
+    [Fact]
+    public void GivenEntityDistinctQuery_AppliesDistinctBeforeOrderAndPagination()
+    {
+        var spec = new Specification<Store>();
+        spec.Query
+            .Where(x => x.Id > 0)
+            .Distinct()
+            .OrderBy(x => x.Name)
+            .Skip(1)
+            .Take(5);
+
+        var actual = _evaluator.GetQuery(DbContext.Stores, spec).ToQueryString();
+        var expected = DbContext.Stores
+            .Where(x => x.Id > 0)
+            .Distinct()
+            .OrderBy(x => x.Name)
+            .Skip(1)
+            .Take(5)
+            .ToQueryString();
+
+        actual.Should().Be(expected);
+    }
+
+    [Fact]
+    public void GivenDistinctSelectProjection_AppliesDistinctBeforeSkipAndTake_AndOmitsSkipZero()
+    {
+        var spec = new Specification<Store, string?>();
+        spec.Query
+            .Where(x => x.Id > 0)
+            .Distinct()
+            .Skip(1)
+            .Take(5)
+            .Select(x => x.Name);
+
+        var actual = _evaluator.GetQuery(DbContext.Stores, spec).ToQueryString();
+        var expected = DbContext.Stores
+            .Where(x => x.Id > 0)
+            .Select(x => x.Name)
+            .Distinct()
+            .Skip(1)
+            .Take(5)
+            .ToQueryString();
+
+        actual.Should().Be(expected);
+
+        var skipZeroSpec = new Specification<Store, string?>();
+        skipZeroSpec.Query
+            .Where(x => x.Id > 0)
+            .Distinct()
+            .Skip(0)
+            .Take(5)
+            .Select(x => x.Name);
+
+        var skipZeroActual = _evaluator.GetQuery(DbContext.Stores, skipZeroSpec).ToQueryString();
+        var skipZeroExpected = DbContext.Stores
+            .Where(x => x.Id > 0)
+            .Select(x => x.Name)
+            .Distinct()
+            .Take(5)
+            .ToQueryString();
+
+        skipZeroActual.Should().Be(skipZeroExpected);
+    }
+
+    [Fact]
+    public void GivenDistinctSelectManyProjection_AppliesDistinctBeforeSkipAndTake()
+    {
+        var spec = new Specification<Store, string?>();
+        spec.Query
+            .Where(x => x.Id > 0)
+            .Distinct()
+            .Skip(1)
+            .Take(5)
+            .SelectMany(x => x.Products.Select(p => p.Name));
+
+        var actual = _evaluator.GetQuery(DbContext.Stores, spec).ToQueryString();
+        var expected = DbContext.Stores
+            .Where(x => x.Id > 0)
+            .SelectMany(x => x.Products.Select(p => p.Name))
+            .Distinct()
+            .Skip(1)
+            .Take(5)
+            .ToQueryString();
+
+        actual.Should().Be(expected);
+    }
+
+    [Fact]
+    public void GivenEvaluateCriteriaOnly_AppliesEntityDistinct_AndSkipsProjectionDistinct()
+    {
+        var entitySpec = new Specification<Store>();
+        entitySpec.Query.Where(x => x.Id > 0).Distinct();
+
+        var projectionSpec = new Specification<Store, string?>();
+        projectionSpec.Query.Where(x => x.Id > 0).Distinct().Select(x => x.Name);
+
+        var entitySql = _evaluator.GetQuery(DbContext.Stores, entitySpec, evaluateCriteriaOnly: true).ToQueryString();
+        var projectionSql = _evaluator.GetQuery(DbContext.Stores, (ISpecification<Store>)projectionSpec, evaluateCriteriaOnly: true).ToQueryString();
+
+        entitySql.Should().Contain("DISTINCT");
+        projectionSql.Should().NotContain("DISTINCT");
+    }
+
+    [Fact]
+    public void GivenOrderByWithDistinctProjection_ThrowsNotSupportedException()
+    {
+        var selectSpec = new Specification<Store, string?>();
+        selectSpec.Query.OrderBy(x => x.Name).Distinct().Select(x => x.Name);
+
+        var selectManySpec = new Specification<Store, string?>();
+        selectManySpec.Query.OrderByDescending(x => x.Name).Distinct().SelectMany(x => x.Products.Select(p => p.Name));
+
+        var selectAction = () => _evaluator.GetQuery(DbContext.Stores, selectSpec);
+        var selectManyAction = () => _evaluator.GetQuery(DbContext.Stores, selectManySpec);
+
+        selectAction.Should().Throw<NotSupportedException>();
+        selectManyAction.Should().Throw<NotSupportedException>();
+    }
+
+    [Fact]
+    public void DerivedEvaluatorOverride_IsHonoredForDistinctProjection()
+    {
+        var evaluator = new TenantFilteringEvaluator();
+        var spec = new Specification<Country, string?>();
+        spec.Query.Distinct().Select(x => x.Name);
+
+        var sql = evaluator.GetQuery(DbContext.Countries, spec).ToQueryString();
+
+        sql.Should().Contain("DISTINCT");
+        sql.Should().Contain("tenant");
+    }
+
+    private sealed class TenantFilteringEvaluator : SpecificationEvaluator
+    {
+        public override IQueryable<T> GetQuery<T>(IQueryable<T> query, ISpecification<T> specification, bool evaluateCriteriaOnly = false)
+        {
+            if (typeof(T) == typeof(Country))
+            {
+                query = ((IQueryable<Country>)query).Where(c => c.Name == "tenant").Cast<T>();
+            }
+            return base.GetQuery(query, specification, evaluateCriteriaOnly);
+        }
     }
 
     private class SpecificationEvaluatorDerived : SpecificationEvaluator

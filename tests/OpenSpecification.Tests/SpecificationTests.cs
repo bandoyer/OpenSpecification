@@ -36,6 +36,7 @@ public class SpecificationTests
             .IgnoreQueryFilters()
             .AsSplitQuery()
             .AsNoTracking()
+            .Distinct()
             .TagWith("testQuery1")
             .PostProcessingAction(x => x.Where(x => x.Id > 0));
 
@@ -73,6 +74,7 @@ public class SpecificationTests
         newSpec.AsNoTracking.Should().Be(spec.AsNoTracking);
         newSpec.AsNoTrackingWithIdentityResolution.Should().Be(spec.AsNoTrackingWithIdentityResolution);
         newSpec.AsTracking.Should().Be(spec.AsTracking);
+        newSpec.IsDistinct.Should().Be(spec.IsDistinct);
     }
 
     [Fact]
@@ -93,6 +95,7 @@ public class SpecificationTests
             .IgnoreQueryFilters()
             .AsSplitQuery()
             .AsNoTracking()
+            .Distinct()
             .TagWith("testQuery1")
             .PostProcessingAction(x => x.Where(x => x.Id > 0));
 
@@ -130,6 +133,7 @@ public class SpecificationTests
         newSpec.AsNoTracking.Should().Be(spec.AsNoTracking);
         newSpec.AsNoTrackingWithIdentityResolution.Should().Be(spec.AsNoTrackingWithIdentityResolution);
         newSpec.AsTracking.Should().Be(spec.AsTracking);
+        newSpec.IsDistinct.Should().Be(spec.IsDistinct);
     }
 
     [Fact]
@@ -137,6 +141,13 @@ public class SpecificationTests
     {
         typeof(ISpecification<Customer>).GetProperty(nameof(Specification<Customer>.Query)).Should().BeNull();
         typeof(ISpecification<Customer, string>).GetProperty(nameof(Specification<Customer, string>.Query)).Should().BeNull();
+    }
+
+    [Fact]
+    public void Interfaces_DoNotDeclareIsDistinct()
+    {
+        typeof(ISpecification<Customer>).GetProperty(nameof(Specification<Customer>.IsDistinct)).Should().BeNull();
+        typeof(ISpecification<Customer, string>).GetProperty(nameof(Specification<Customer, string>.IsDistinct)).Should().BeNull();
     }
 
 #if NET8_0_OR_GREATER

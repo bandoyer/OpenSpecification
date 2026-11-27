@@ -20,6 +20,8 @@ public class Specification<T, TResult> : Specification<T>, ISpecification<T, TRe
     /// <inheritdoc/>
     public new Func<IEnumerable<TResult>, IEnumerable<TResult>>? PostProcessingAction { get; internal set; } = null;
 
+    internal override bool IsProjection => true;
+
     /// <inheritdoc/>
     public new virtual IEnumerable<TResult> Evaluate(IEnumerable<T> entities)
     {
@@ -29,7 +31,7 @@ public class Specification<T, TResult> : Specification<T>, ISpecification<T, TRe
 }
 
 /// <inheritdoc cref="ISpecification{T}"/>
-public class Specification<T> : ISpecification<T>
+public class Specification<T> : ISpecification<T>, IDistinctSpecification
 {
     // Retained unused for 10.x binary compatibility; chain-discarding state is tracked per builder instance.
     [ThreadStatic]
@@ -116,6 +118,11 @@ public class Specification<T> : ISpecification<T>
     public bool AsNoTrackingWithIdentityResolution { get; internal set; } = false;
 
     /// <inheritdoc/>
+    public bool IsDistinct { get; internal set; } = false;
+
+    internal virtual bool IsProjection => false;
+
+    /// <inheritdoc/>
     public Dictionary<string, object> Items => _items ??= [];
 
     /// <inheritdoc/>
@@ -176,6 +183,7 @@ public class Specification<T> : ISpecification<T>
         target.AsNoTracking = source.AsNoTracking;
         target.AsTracking = source.AsTracking;
         target.AsNoTrackingWithIdentityResolution = source.AsNoTrackingWithIdentityResolution;
+        target.IsDistinct = source.IsDistinct;
         target._whereExpressions = source._whereExpressions.Clone();
         target._searchExpressions = source._searchExpressions.Clone();
         target._orderExpressions = source._orderExpressions.Clone();
