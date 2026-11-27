@@ -212,6 +212,92 @@ public static partial class SpecificationBuilderExtensions
         => AddGroupOrderContinuation(builder, keySelector, OrderTypeEnum.ThenByDescending, condition);
 
     /// <summary>
+    /// Sets the number of groups to skip in the grouped specification.
+    /// </summary>
+    /// <typeparam name="T">The type of the entity.</typeparam>
+    /// <typeparam name="TKey">The type of the grouping key.</typeparam>
+    /// <typeparam name="TResult">The type of the projected result.</typeparam>
+    /// <param name="builder">The grouped specification builder.</param>
+    /// <param name="skip">The number of groups to skip.</param>
+    /// <returns>The grouped specification builder.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/> is <see langword="null"/>.</exception>
+    /// <exception cref="DuplicateSkipException">Thrown when group-level <c>Skip</c> is already set.</exception>
+    public static IGroupedSpecificationBuilder<T, TKey, TResult> Skip<T, TKey, TResult>(
+        this IGroupedSpecificationBuilder<T, TKey, TResult> builder,
+        int skip)
+        => Skip(builder, skip, true);
+
+    /// <summary>
+    /// Sets the number of groups to skip in the grouped specification when <paramref name="condition"/> is <see langword="true"/>.
+    /// </summary>
+    /// <typeparam name="T">The type of the entity.</typeparam>
+    /// <typeparam name="TKey">The type of the grouping key.</typeparam>
+    /// <typeparam name="TResult">The type of the projected result.</typeparam>
+    /// <param name="builder">The grouped specification builder.</param>
+    /// <param name="skip">The number of groups to skip.</param>
+    /// <param name="condition">The condition to evaluate.</param>
+    /// <returns>The grouped specification builder.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/> is <see langword="null"/>.</exception>
+    /// <exception cref="DuplicateSkipException">Thrown when <paramref name="condition"/> is <see langword="true"/> and group-level <c>Skip</c> is already set.</exception>
+    public static IGroupedSpecificationBuilder<T, TKey, TResult> Skip<T, TKey, TResult>(
+        this IGroupedSpecificationBuilder<T, TKey, TResult> builder,
+        int skip,
+        bool condition)
+    {
+        if (builder is null) throw new ArgumentNullException(nameof(builder));
+
+        var plan = GetGroupByPlan(builder);
+        SetGroupSkip(plan, skip, condition);
+
+        return builder is OrderedGroupedSpecificationBuilder<T, TKey, TResult>
+            ? new GroupedSpecificationBuilder<T, TKey, TResult>(builder.Specification, plan)
+            : builder;
+    }
+
+    /// <summary>
+    /// Sets the number of groups to take in the grouped specification.
+    /// </summary>
+    /// <typeparam name="T">The type of the entity.</typeparam>
+    /// <typeparam name="TKey">The type of the grouping key.</typeparam>
+    /// <typeparam name="TResult">The type of the projected result.</typeparam>
+    /// <param name="builder">The grouped specification builder.</param>
+    /// <param name="take">The number of groups to take.</param>
+    /// <returns>The grouped specification builder.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/> is <see langword="null"/>.</exception>
+    /// <exception cref="DuplicateTakeException">Thrown when group-level <c>Take</c> is already set.</exception>
+    public static IGroupedSpecificationBuilder<T, TKey, TResult> Take<T, TKey, TResult>(
+        this IGroupedSpecificationBuilder<T, TKey, TResult> builder,
+        int take)
+        => Take(builder, take, true);
+
+    /// <summary>
+    /// Sets the number of groups to take in the grouped specification when <paramref name="condition"/> is <see langword="true"/>.
+    /// </summary>
+    /// <typeparam name="T">The type of the entity.</typeparam>
+    /// <typeparam name="TKey">The type of the grouping key.</typeparam>
+    /// <typeparam name="TResult">The type of the projected result.</typeparam>
+    /// <param name="builder">The grouped specification builder.</param>
+    /// <param name="take">The number of groups to take.</param>
+    /// <param name="condition">The condition to evaluate.</param>
+    /// <returns>The grouped specification builder.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/> is <see langword="null"/>.</exception>
+    /// <exception cref="DuplicateTakeException">Thrown when <paramref name="condition"/> is <see langword="true"/> and group-level <c>Take</c> is already set.</exception>
+    public static IGroupedSpecificationBuilder<T, TKey, TResult> Take<T, TKey, TResult>(
+        this IGroupedSpecificationBuilder<T, TKey, TResult> builder,
+        int take,
+        bool condition)
+    {
+        if (builder is null) throw new ArgumentNullException(nameof(builder));
+
+        var plan = GetGroupByPlan(builder);
+        SetGroupTake(plan, take, condition);
+
+        return builder is OrderedGroupedSpecificationBuilder<T, TKey, TResult>
+            ? new GroupedSpecificationBuilder<T, TKey, TResult>(builder.Specification, plan)
+            : builder;
+    }
+
+    /// <summary>
     /// Projects each entity group into <typeparamref name="TResult"/> and transitions the builder to the grouped result stage.
     /// </summary>
     /// <typeparam name="T">The type of the entity.</typeparam>
@@ -280,6 +366,138 @@ public static partial class SpecificationBuilderExtensions
             ? concrete.Plan
             : builder.Specification.GroupByPlan as GroupingStagePlan<T, TKey, TResult>
                 ?? throw new InvalidOperationException("The grouped specification builder is not associated with a matching GroupBy plan.");
+
+    private static IGroupByPlan<T, TResult> GetGroupByPlan<T, TResult>(
+        IGroupedResultSpecificationBuilder<T, TResult> builder)
+        => builder.Specification.GroupByPlan
+            ?? throw new InvalidOperationException("The grouped result specification builder is not associated with a GroupBy plan.");
+
+    private static void SetGroupSkip<T, TResult>(IGroupByPlan<T, TResult> plan, int skip, bool condition)
+    {
+        if (condition)
+        {
+            if (plan.Skip != -1) throw new DuplicateSkipException();
+            plan.Skip = skip;
+        }
+    }
+
+    private static void SetGroupTake<T, TResult>(IGroupByPlan<T, TResult> plan, int take, bool condition)
+    {
+        if (condition)
+        {
+            if (plan.Take != -1) throw new DuplicateTakeException();
+            plan.Take = take;
+        }
+    }
+
+    /// <summary>
+    /// Configures the grouped specification to deduplicate projected group results.
+    /// </summary>
+    /// <typeparam name="T">The type of the entity.</typeparam>
+    /// <typeparam name="TResult">The type of the projected result.</typeparam>
+    /// <param name="builder">The grouped result specification builder.</param>
+    /// <returns>The updated grouped result specification builder.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/> is <see langword="null"/>.</exception>
+    public static IGroupedResultSpecificationBuilder<T, TResult> Distinct<T, TResult>(
+        this IGroupedResultSpecificationBuilder<T, TResult> builder)
+        => Distinct(builder, true);
+
+    /// <summary>
+    /// Configures the grouped specification to deduplicate projected group results when <paramref name="condition"/> is <see langword="true"/>.
+    /// </summary>
+    /// <typeparam name="T">The type of the entity.</typeparam>
+    /// <typeparam name="TResult">The type of the projected result.</typeparam>
+    /// <param name="builder">The grouped result specification builder.</param>
+    /// <param name="condition">The condition to evaluate.</param>
+    /// <returns>The updated grouped result specification builder.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/> is <see langword="null"/>.</exception>
+    public static IGroupedResultSpecificationBuilder<T, TResult> Distinct<T, TResult>(
+        this IGroupedResultSpecificationBuilder<T, TResult> builder,
+        bool condition)
+    {
+        if (builder is null) throw new ArgumentNullException(nameof(builder));
+
+        if (condition)
+        {
+            builder.Specification.IsDistinct = true;
+        }
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Sets the number of grouped results to skip in the grouped specification.
+    /// </summary>
+    /// <typeparam name="T">The type of the entity.</typeparam>
+    /// <typeparam name="TResult">The type of the projected result.</typeparam>
+    /// <param name="builder">The grouped result specification builder.</param>
+    /// <param name="skip">The number of grouped results to skip.</param>
+    /// <returns>The updated grouped result specification builder.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/> is <see langword="null"/>.</exception>
+    /// <exception cref="DuplicateSkipException">Thrown when group-level <c>Skip</c> is already set.</exception>
+    public static IGroupedResultSpecificationBuilder<T, TResult> Skip<T, TResult>(
+        this IGroupedResultSpecificationBuilder<T, TResult> builder,
+        int skip)
+        => Skip(builder, skip, true);
+
+    /// <summary>
+    /// Sets the number of grouped results to skip in the grouped specification when <paramref name="condition"/> is <see langword="true"/>.
+    /// </summary>
+    /// <typeparam name="T">The type of the entity.</typeparam>
+    /// <typeparam name="TResult">The type of the projected result.</typeparam>
+    /// <param name="builder">The grouped result specification builder.</param>
+    /// <param name="skip">The number of grouped results to skip.</param>
+    /// <param name="condition">The condition to evaluate.</param>
+    /// <returns>The updated grouped result specification builder.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/> is <see langword="null"/>.</exception>
+    /// <exception cref="DuplicateSkipException">Thrown when <paramref name="condition"/> is <see langword="true"/> and group-level <c>Skip</c> is already set.</exception>
+    public static IGroupedResultSpecificationBuilder<T, TResult> Skip<T, TResult>(
+        this IGroupedResultSpecificationBuilder<T, TResult> builder,
+        int skip,
+        bool condition)
+    {
+        if (builder is null) throw new ArgumentNullException(nameof(builder));
+
+        SetGroupSkip(GetGroupByPlan(builder), skip, condition);
+        return builder;
+    }
+
+    /// <summary>
+    /// Sets the number of grouped results to take in the grouped specification.
+    /// </summary>
+    /// <typeparam name="T">The type of the entity.</typeparam>
+    /// <typeparam name="TResult">The type of the projected result.</typeparam>
+    /// <param name="builder">The grouped result specification builder.</param>
+    /// <param name="take">The number of grouped results to take.</param>
+    /// <returns>The updated grouped result specification builder.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/> is <see langword="null"/>.</exception>
+    /// <exception cref="DuplicateTakeException">Thrown when group-level <c>Take</c> is already set.</exception>
+    public static IGroupedResultSpecificationBuilder<T, TResult> Take<T, TResult>(
+        this IGroupedResultSpecificationBuilder<T, TResult> builder,
+        int take)
+        => Take(builder, take, true);
+
+    /// <summary>
+    /// Sets the number of grouped results to take in the grouped specification when <paramref name="condition"/> is <see langword="true"/>.
+    /// </summary>
+    /// <typeparam name="T">The type of the entity.</typeparam>
+    /// <typeparam name="TResult">The type of the projected result.</typeparam>
+    /// <param name="builder">The grouped result specification builder.</param>
+    /// <param name="take">The number of grouped results to take.</param>
+    /// <param name="condition">The condition to evaluate.</param>
+    /// <returns>The updated grouped result specification builder.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/> is <see langword="null"/>.</exception>
+    /// <exception cref="DuplicateTakeException">Thrown when <paramref name="condition"/> is <see langword="true"/> and group-level <c>Take</c> is already set.</exception>
+    public static IGroupedResultSpecificationBuilder<T, TResult> Take<T, TResult>(
+        this IGroupedResultSpecificationBuilder<T, TResult> builder,
+        int take,
+        bool condition)
+    {
+        if (builder is null) throw new ArgumentNullException(nameof(builder));
+
+        SetGroupTake(GetGroupByPlan(builder), take, condition);
+        return builder;
+    }
 
     /// <summary>
     /// Specifies an in-memory function to apply to the grouped projection results returned by list-returning methods.

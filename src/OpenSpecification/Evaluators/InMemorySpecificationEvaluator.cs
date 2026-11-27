@@ -58,7 +58,7 @@ public class InMemorySpecificationEvaluator : IInMemorySpecificationEvaluator
                 criteriaSource = evaluator.Evaluate(criteriaSource, specification);
             }
 
-            var groupedQuery = groupByPlan.Apply(criteriaSource);
+            var groupedQuery = groupByPlan.Apply(criteriaSource, DistinctEvaluator.IsDistinctSpecification(specification));
 
             return specification.PostProcessingAction is null
                 ? groupedQuery

@@ -3,8 +3,13 @@ namespace OpenSpecification;
 internal interface IGroupByPlan<T, TResult>
 {
     bool HasResultSelector { get; }
-    IQueryable<TResult> Apply(IQueryable<T> criteriaSource);
-    IEnumerable<TResult> Apply(IEnumerable<T> criteriaSource);
+    bool HasOrdering { get; }
+    int Skip { get; set; }
+    int Take { get; set; }
+    IQueryable<TResult> Apply(IQueryable<T> criteriaSource, bool isDistinct);
+    IEnumerable<TResult> Apply(IEnumerable<T> criteriaSource, bool isDistinct);
+    IQueryable<int> ApplyCount(IQueryable<T> criteriaSource);
+    IQueryable<TResult> ApplyDistinctCount(IQueryable<T> criteriaSource);
     IGroupByPlan<T, TResult> Clone();
 }
 
@@ -96,6 +101,36 @@ internal sealed class GroupingStagePlan<T, TKey, TResult> : IGroupByPlan<T, TRes
 
     public bool HasResultSelector => _resultSelector is not null;
 
+    public bool HasOrdering
+    {
+        get
+        {
+            if (_orderSteps.SingleOrDefault is { } single)
+            {
+                return single.IsPrimary;
+            }
+
+            if (_orderSteps.IsEmpty)
+            {
+                return false;
+            }
+
+            foreach (var step in _orderSteps.List)
+            {
+                if (step.IsPrimary)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
+
+    public int Skip { get; set; } = -1;
+
+    public int Take { get; set; } = -1;
+
     public GroupingStagePlan(Expression<Func<T, TKey>> keySelector)
     {
         KeySelector = keySelector ?? throw new ArgumentNullException(nameof(keySelector));
@@ -107,7 +142,9 @@ internal sealed class GroupingStagePlan<T, TKey, TResult> : IGroupByPlan<T, TRes
         Expression<Func<IGrouping<TKey, T>, TResult>>? resultSelector,
         Func<IGrouping<TKey, T>, TResult>? compiledResultSelector,
         OneOrMany<GroupHavingPredicate<TKey, T>> havingPredicates,
-        OneOrMany<GroupOrderStep<T, TKey>> orderSteps)
+        OneOrMany<GroupOrderStep<T, TKey>> orderSteps,
+        int skip,
+        int take)
     {
         KeySelector = keySelector;
         _compiledKeySelector = compiledKeySelector;
@@ -115,6 +152,8 @@ internal sealed class GroupingStagePlan<T, TKey, TResult> : IGroupByPlan<T, TRes
         _compiledResultSelector = compiledResultSelector;
         _havingPredicates = havingPredicates;
         _orderSteps = orderSteps;
+        Skip = skip;
+        Take = take;
     }
 
     public void AddHaving(Expression<Func<IGrouping<TKey, T>, bool>> predicate)
@@ -123,9 +162,8 @@ internal sealed class GroupingStagePlan<T, TKey, TResult> : IGroupByPlan<T, TRes
     public void AddOrderStep<TOrderKey>(Expression<Func<IGrouping<TKey, T>, TOrderKey>> keySelector, OrderTypeEnum orderType)
         => _orderSteps.Add(new GroupOrderStep<T, TKey, TOrderKey>(keySelector, orderType));
 
-    public IQueryable<TResult> Apply(IQueryable<T> criteriaSource)
+    private IQueryable<IGrouping<TKey, T>> ApplyGroupAndHaving(IQueryable<T> criteriaSource)
     {
-        var resultSelector = _resultSelector ?? throw new SelectorNotFoundException();
         var grouped = criteriaSource.GroupBy(KeySelector);
 
         if (_havingPredicates.SingleOrDefault is { } singleHaving)
@@ -139,6 +177,14 @@ internal sealed class GroupingStagePlan<T, TKey, TResult> : IGroupByPlan<T, TRes
                 grouped = grouped.Where(having.Predicate);
             }
         }
+
+        return grouped;
+    }
+
+    public IQueryable<TResult> Apply(IQueryable<T> criteriaSource, bool isDistinct)
+    {
+        var resultSelector = _resultSelector ?? throw new SelectorNotFoundException();
+        var grouped = ApplyGroupAndHaving(criteriaSource);
 
         if (_orderSteps.SingleOrDefault is { } singleOrder)
         {
@@ -171,10 +217,28 @@ internal sealed class GroupingStagePlan<T, TKey, TResult> : IGroupByPlan<T, TRes
             }
         }
 
-        return grouped.Select(resultSelector);
+        var projected = grouped.Select(resultSelector);
+
+        if (isDistinct)
+        {
+            projected = projected.Distinct();
+        }
+
+        // If skip is 0, avoid adding to the IQueryable, as PaginationEvaluator does.
+        if (Skip > 0)
+        {
+            projected = projected.Skip(Skip);
+        }
+
+        if (Take >= 0)
+        {
+            projected = projected.Take(Take);
+        }
+
+        return projected;
     }
 
-    public IEnumerable<TResult> Apply(IEnumerable<T> criteriaSource)
+    public IEnumerable<TResult> Apply(IEnumerable<T> criteriaSource, bool isDistinct)
     {
         var resultSelector = _resultSelector ?? throw new SelectorNotFoundException();
         var keyFunc = _compiledKeySelector ??= KeySelector.Compile();
@@ -225,7 +289,33 @@ internal sealed class GroupingStagePlan<T, TKey, TResult> : IGroupByPlan<T, TRes
             }
         }
 
-        return grouped.Select(resultFunc);
+        var projected = grouped.Select(resultFunc);
+
+        if (isDistinct)
+        {
+            projected = projected.Distinct();
+        }
+
+        if (Skip > 0)
+        {
+            projected = projected.Skip(Skip);
+        }
+
+        if (Take >= 0)
+        {
+            projected = projected.Take(Take);
+        }
+
+        return projected;
+    }
+
+    public IQueryable<int> ApplyCount(IQueryable<T> criteriaSource)
+        => ApplyGroupAndHaving(criteriaSource).Select(_ => 1);
+
+    public IQueryable<TResult> ApplyDistinctCount(IQueryable<T> criteriaSource)
+    {
+        var resultSelector = _resultSelector ?? throw new SelectorNotFoundException();
+        return ApplyGroupAndHaving(criteriaSource).Select(resultSelector).Distinct();
     }
 
     public IGroupByPlan<T, TResult> Clone()
@@ -235,7 +325,9 @@ internal sealed class GroupingStagePlan<T, TKey, TResult> : IGroupByPlan<T, TRes
             _resultSelector,
             _compiledResultSelector,
             _havingPredicates.Clone(),
-            _orderSteps.Clone());
+            _orderSteps.Clone(),
+            Skip,
+            Take);
 }
 
 internal static class GroupByHelper
@@ -261,7 +353,7 @@ internal static class GroupByHelper
         if (specification.Skip != -1 || specification.Take != -1)
             throw new NotSupportedException("Applying entity Skip or Take before GroupBy is not supported. Remove entity Skip and Take from the specification.");
 
-        if (DistinctEvaluator.IsDistinctSpecification(specification))
-            throw new NotSupportedException("Combining Distinct with GroupBy is not yet supported.");
+        if (DistinctEvaluator.IsDistinctSpecification(specification) && plan.HasOrdering)
+            throw new NotSupportedException("Ordering groups before a distinct grouped projection is not supported. Remove group OrderBy from the specification.");
     }
 }

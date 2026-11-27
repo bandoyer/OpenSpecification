@@ -268,6 +268,123 @@ public class Builder_GroupBy
         spec3.Evaluate(customers).Should().Equal("A", "B", "C");
     }
 
+    [Fact]
+    public void GroupSkipAndTake_WorkPreAndPostSelect_AndDemoteOrderedBuilder()
+    {
+        var spec1 = new Specification<Customer, string>();
+        var ordered1 = spec1.Query.GroupBy(c => c.City).OrderBy(g => g.Key);
+        var afterSkip = ordered1.Skip(1);
+        var afterTake = afterSkip.Take(2);
+        afterSkip.Should().NotBeAssignableTo<IOrderedGroupedSpecificationBuilder<Customer, string, string>>();
+        afterTake.Should().NotBeAssignableTo<IOrderedGroupedSpecificationBuilder<Customer, string, string>>();
+        afterTake.Select(g => g.Key);
+
+        var spec2 = new Specification<Customer, string>();
+        var result2 = spec2.Query.GroupBy(c => c.City).OrderBy(g => g.Key).Select(g => g.Key).Skip(1).Take(2);
+        result2.Specification.Should().BeSameAs(spec2);
+
+        // Conditional false is a no-op and never throws or mutates.
+        var spec3 = new Specification<Customer, string>();
+        spec3.Query
+            .GroupBy(c => c.City)
+            .OrderBy(g => g.Key)
+            .Skip(99, false)
+            .Take(0, false)
+            .Skip(1, true)
+            .Take(2, true)
+            .Select(g => g.Key)
+            .Skip(50, false)
+            .Take(50, false);
+
+        var customers = new List<Customer> { new(1, "A", 1), new(2, "B", 1), new(3, "C", 1), new(4, "D", 1) };
+        spec1.Evaluate(customers).Should().Equal("B", "C");
+        spec2.Evaluate(customers).Should().Equal("B", "C");
+        spec3.Evaluate(customers).Should().Equal("B", "C");
+    }
+
+    [Fact]
+    public void GroupSkipAndTake_ThrowDuplicateExceptions_AcrossAndWithinStages_WithoutMutatingFirstValue()
+    {
+        var preSkipSpec = new Specification<Customer, string>();
+        var preSkip = preSkipSpec.Query.GroupBy(c => c.City).OrderBy(g => g.Key).Skip(1);
+        Action dupPreSkip = () => preSkip.Skip(2);
+        dupPreSkip.Should().Throw<DuplicateSkipException>();
+        preSkip.Select(g => g.Key);
+
+        var crossSkipSpec = new Specification<Customer, string>();
+        var crossSkipResult = crossSkipSpec.Query.GroupBy(c => c.City).OrderBy(g => g.Key).Skip(1).Select(g => g.Key);
+        Action dupCrossSkip = () => crossSkipResult.Skip(2);
+        dupCrossSkip.Should().Throw<DuplicateSkipException>();
+
+        var postSkipSpec = new Specification<Customer, string>();
+        var postSkipResult = postSkipSpec.Query.GroupBy(c => c.City).OrderBy(g => g.Key).Select(g => g.Key).Skip(1);
+        Action dupPostSkip = () => postSkipResult.Skip(2);
+        dupPostSkip.Should().Throw<DuplicateSkipException>();
+
+        var preTakeSpec = new Specification<Customer, string>();
+        var preTake = preTakeSpec.Query.GroupBy(c => c.City).OrderBy(g => g.Key).Take(2);
+        Action dupPreTake = () => preTake.Take(1);
+        dupPreTake.Should().Throw<DuplicateTakeException>();
+        preTake.Select(g => g.Key);
+
+        var crossTakeSpec = new Specification<Customer, string>();
+        var crossTakeResult = crossTakeSpec.Query.GroupBy(c => c.City).OrderBy(g => g.Key).Take(2).Select(g => g.Key);
+        Action dupCrossTake = () => crossTakeResult.Take(1);
+        dupCrossTake.Should().Throw<DuplicateTakeException>();
+
+        var postTakeSpec = new Specification<Customer, string>();
+        var postTakeResult = postTakeSpec.Query.GroupBy(c => c.City).OrderBy(g => g.Key).Select(g => g.Key).Take(2);
+        Action dupPostTake = () => postTakeResult.Take(1);
+        dupPostTake.Should().Throw<DuplicateTakeException>();
+
+        // First value must remain intact after rejected duplicate calls.
+        var customers = new List<Customer> { new(1, "A", 1), new(2, "B", 1), new(3, "C", 1) };
+        preSkipSpec.Evaluate(customers).Should().Equal("B", "C");
+        crossSkipSpec.Evaluate(customers).Should().Equal("B", "C");
+        postSkipSpec.Evaluate(customers).Should().Equal("B", "C");
+        preTakeSpec.Evaluate(customers).Should().Equal("A", "B");
+        crossTakeSpec.Evaluate(customers).Should().Equal("A", "B");
+        postTakeSpec.Evaluate(customers).Should().Equal("A", "B");
+    }
+
+    [Fact]
+    public void PostGroupDistinct_SetsIsDistinctWhenActive_AndNullBuilderThrowsArgumentNullException()
+    {
+        var activeSpec = new Specification<Customer, int>();
+        var result = activeSpec.Query.GroupBy(c => c.City).Select(g => g.Count()).Distinct();
+        result.Specification.Should().BeSameAs(activeSpec);
+        activeSpec.IsDistinct.Should().BeTrue();
+
+        var inactiveSpec = new Specification<Customer, int>();
+        inactiveSpec.Query.GroupBy(c => c.City).Select(g => g.Count()).Distinct(false);
+        inactiveSpec.IsDistinct.Should().BeFalse();
+
+        IGroupedSpecificationBuilder<Customer, string, int> nullGrouped = null!;
+        IGroupedResultSpecificationBuilder<Customer, int> nullResult = null!;
+
+        Action gSkip = () => nullGrouped.Skip(1);
+        Action gSkipCond = () => nullGrouped.Skip(1, false);
+        Action gTake = () => nullGrouped.Take(1);
+        Action gTakeCond = () => nullGrouped.Take(1, false);
+        Action rSkip = () => nullResult.Skip(1);
+        Action rSkipCond = () => nullResult.Skip(1, false);
+        Action rTake = () => nullResult.Take(1);
+        Action rTakeCond = () => nullResult.Take(1, false);
+        Action rDistinct = () => nullResult.Distinct();
+        Action rDistinctCond = () => nullResult.Distinct(false);
+
+        gSkip.Should().Throw<ArgumentNullException>().WithParameterName("builder");
+        gSkipCond.Should().Throw<ArgumentNullException>().WithParameterName("builder");
+        gTake.Should().Throw<ArgumentNullException>().WithParameterName("builder");
+        gTakeCond.Should().Throw<ArgumentNullException>().WithParameterName("builder");
+        rSkip.Should().Throw<ArgumentNullException>().WithParameterName("builder");
+        rSkipCond.Should().Throw<ArgumentNullException>().WithParameterName("builder");
+        rTake.Should().Throw<ArgumentNullException>().WithParameterName("builder");
+        rTakeCond.Should().Throw<ArgumentNullException>().WithParameterName("builder");
+        rDistinct.Should().Throw<ArgumentNullException>().WithParameterName("builder");
+        rDistinctCond.Should().Throw<ArgumentNullException>().WithParameterName("builder");
+    }
+
     private static Task RunOnFreshThreadAsync(Action action)
     {
         var tcs = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);

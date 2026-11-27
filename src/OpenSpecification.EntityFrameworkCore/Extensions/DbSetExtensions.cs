@@ -188,9 +188,10 @@ public static class DbSetExtensions
     /// projections that <paramref name="filter"/> asks for, with the page's details. An out-of-range page or page size is clamped to the pages that exist, as
     /// <see cref="Pagination.Create"/> says.
     /// <para>
-    /// The count evaluates the criteria only, as CountAsync does. For a SelectMany, it counts the flattened results,
-    /// and when Distinct is enabled it counts the distinct projected results, which are what the pages hold. The page applies the rest of the specification too,
-    /// except its PostProcessingAction, which a paged query ignores so the page agrees with the count.
+    /// The count evaluates the criteria only, as CountAsync does. For a SelectMany, it counts the flattened results;
+    /// for a GroupBy, it counts the surviving groups; and when Distinct is enabled it counts the distinct projected
+    /// results, which are what the pages hold. The page applies the rest of the specification too, except its
+    /// PostProcessingAction, which a paged query ignores so the page agrees with the count.
     /// </para>
     /// </summary>
     /// <typeparam name="TSource">The type of the entities.</typeparam>
@@ -218,9 +219,10 @@ public static class DbSetExtensions
     /// projections that <paramref name="filter"/> asks for, with the page's details. An out-of-range page or page size is clamped to the pages that exist, as
     /// <see cref="Pagination.Create"/> says.
     /// <para>
-    /// The count evaluates the criteria only, as CountAsync does. For a SelectMany, it counts the flattened results,
-    /// and when Distinct is enabled it counts the distinct projected results, which are what the pages hold. The page applies the rest of the specification too,
-    /// except its PostProcessingAction, which a paged query ignores so the page agrees with the count.
+    /// The count evaluates the criteria only, as CountAsync does. For a SelectMany, it counts the flattened results;
+    /// for a GroupBy, it counts the surviving groups; and when Distinct is enabled it counts the distinct projected
+    /// results, which are what the pages hold. The page applies the rest of the specification too, except its
+    /// PostProcessingAction, which a paged query ignores so the page agrees with the count.
     /// </para>
     /// </summary>
     /// <typeparam name="TSource">The type of the entities.</typeparam>
