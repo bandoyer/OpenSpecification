@@ -376,8 +376,7 @@ public static partial class SpecificationBuilderExtensions
     {
         if (condition)
         {
-            if (plan.Skip != -1) throw new DuplicateSkipException();
-            plan.Skip = skip;
+            plan.SetSkip(skip);
         }
     }
 
@@ -385,8 +384,7 @@ public static partial class SpecificationBuilderExtensions
     {
         if (condition)
         {
-            if (plan.Take != -1) throw new DuplicateTakeException();
-            plan.Take = take;
+            plan.SetTake(take);
         }
     }
 

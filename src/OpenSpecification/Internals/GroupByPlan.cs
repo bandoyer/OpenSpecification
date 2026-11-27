@@ -4,8 +4,10 @@ internal interface IGroupByPlan<T, TResult>
 {
     bool HasResultSelector { get; }
     bool HasOrdering { get; }
-    int Skip { get; set; }
-    int Take { get; set; }
+    int Skip { get; }
+    int Take { get; }
+    void SetSkip(int skip);
+    void SetTake(int take);
     IQueryable<TResult> Apply(IQueryable<T> criteriaSource, bool isDistinct);
     IEnumerable<TResult> Apply(IEnumerable<T> criteriaSource, bool isDistinct);
     IQueryable<int> ApplyCount(IQueryable<T> criteriaSource);
@@ -127,9 +129,12 @@ internal sealed class GroupingStagePlan<T, TKey, TResult> : IGroupByPlan<T, TRes
         }
     }
 
-    public int Skip { get; set; } = -1;
+    private bool _hasSkip;
+    private bool _hasTake;
 
-    public int Take { get; set; } = -1;
+    public int Skip { get; private set; } = -1;
+
+    public int Take { get; private set; } = -1;
 
     public GroupingStagePlan(Expression<Func<T, TKey>> keySelector)
     {
@@ -143,7 +148,9 @@ internal sealed class GroupingStagePlan<T, TKey, TResult> : IGroupByPlan<T, TRes
         Func<IGrouping<TKey, T>, TResult>? compiledResultSelector,
         OneOrMany<GroupHavingPredicate<TKey, T>> havingPredicates,
         OneOrMany<GroupOrderStep<T, TKey>> orderSteps,
+        bool hasSkip,
         int skip,
+        bool hasTake,
         int take)
     {
         KeySelector = keySelector;
@@ -152,7 +159,23 @@ internal sealed class GroupingStagePlan<T, TKey, TResult> : IGroupByPlan<T, TRes
         _compiledResultSelector = compiledResultSelector;
         _havingPredicates = havingPredicates;
         _orderSteps = orderSteps;
+        _hasSkip = hasSkip;
         Skip = skip;
+        _hasTake = hasTake;
+        Take = take;
+    }
+
+    public void SetSkip(int skip)
+    {
+        if (_hasSkip) throw new DuplicateSkipException();
+        _hasSkip = true;
+        Skip = skip;
+    }
+
+    public void SetTake(int take)
+    {
+        if (_hasTake) throw new DuplicateTakeException();
+        _hasTake = true;
         Take = take;
     }
 
@@ -326,7 +349,9 @@ internal sealed class GroupingStagePlan<T, TKey, TResult> : IGroupByPlan<T, TRes
             _compiledResultSelector,
             _havingPredicates.Clone(),
             _orderSteps.Clone(),
+            _hasSkip,
             Skip,
+            _hasTake,
             Take);
 }
 

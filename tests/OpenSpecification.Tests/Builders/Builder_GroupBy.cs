@@ -348,6 +348,54 @@ public class Builder_GroupBy
     }
 
     [Fact]
+    public void GroupSkipAndTake_WithNegativeOneActiveCall_StillTriggerDuplicateGuardsAndPreserveCloneState()
+    {
+        var skipNegOnePre = new Specification<Customer, string>();
+        var skipNegOneResult = skipNegOnePre.Query.GroupBy(c => c.City).OrderBy(g => g.Key).Skip(-1).Select(g => g.Key);
+        Action dupCrossSkip = () => skipNegOneResult.Skip(1);
+        dupCrossSkip.Should().Throw<DuplicateSkipException>();
+
+        var skipNegOneSame = new Specification<Customer, string>();
+        var skipNegOneGrouped = skipNegOneSame.Query.GroupBy(c => c.City).Skip(-1);
+        Action dupSameSkip = () => skipNegOneGrouped.Skip(1);
+        dupSameSkip.Should().Throw<DuplicateSkipException>();
+
+        var takeNegOnePre = new Specification<Customer, string>();
+        var takeNegOneResult = takeNegOnePre.Query.GroupBy(c => c.City).OrderBy(g => g.Key).Take(-1).Select(g => g.Key);
+        Action dupCrossTake = () => takeNegOneResult.Take(1);
+        dupCrossTake.Should().Throw<DuplicateTakeException>();
+
+        var takeNegOneSame = new Specification<Customer, string>();
+        var takeNegOneGrouped = takeNegOneSame.Query.GroupBy(c => c.City).Take(-1);
+        Action dupSameTake = () => takeNegOneGrouped.Take(1);
+        dupSameTake.Should().Throw<DuplicateTakeException>();
+
+        // Inactive Skip(-1, false) / Take(-1, false) must NOT mark Skip/Take as set.
+        var inactiveNegOne = new Specification<Customer, string>();
+        inactiveNegOne.Query
+            .GroupBy(c => c.City)
+            .OrderBy(g => g.Key)
+            .Skip(-1, false)
+            .Take(-1, false)
+            .Select(g => g.Key)
+            .Skip(1)
+            .Take(1);
+
+        // Slicing semantics stay intact (Skip(-1)/Take(-1) are no-ops at evaluation time; first value preserved).
+        var customers = new List<Customer> { new(1, "A", 1), new(2, "B", 1), new(3, "C", 1) };
+        skipNegOnePre.Evaluate(customers).Should().Equal("A", "B", "C");
+        takeNegOnePre.Evaluate(customers).Should().Equal("A", "B", "C");
+        inactiveNegOne.Evaluate(customers).Should().Equal("B");
+
+        // WithProjectionOf preserves _hasSkip/_hasTake on the cloned plan.
+        var source = new Specification<Customer>();
+        var clonedSkip = source.WithProjectionOf(skipNegOnePre);
+        var clonedTake = source.WithProjectionOf(takeNegOnePre);
+        clonedSkip.Evaluate(customers).Should().Equal("A", "B", "C");
+        clonedTake.Evaluate(customers).Should().Equal("A", "B", "C");
+    }
+
+    [Fact]
     public void PostGroupDistinct_SetsIsDistinctWhenActive_AndNullBuilderThrowsArgumentNullException()
     {
         var activeSpec = new Specification<Customer, int>();
