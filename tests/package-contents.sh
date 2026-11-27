@@ -12,6 +12,7 @@ dotnet pack "$root/ci.slnf" --configuration Release --no-build --output "$feed" 
   || { cat "$feed/pack.log"; echo "FAIL: dotnet pack failed; build ci.slnf in Release first"; exit 1; }
 
 failed=0
+missing_package=0
 
 # Each project under src/ packs a package with a lib/<framework>/ folder for each framework its TargetFrameworks
 # names, and no other, and each folder holds only <id>.dll and <id>.xml.
@@ -21,7 +22,7 @@ lib_folders_hold_only_assembly_and_docs() {
     id=$(basename "$project" .csproj)
     nupkg=$(find "$feed" -maxdepth 1 -name "$id.[0-9]*.nupkg" -print -quit)
     if [[ -z $nupkg ]]; then
-      echo "FAIL $id: no package"; failed=1; continue
+      echo "FAIL $id: no package"; failed=1; missing_package=1; continue
     fi
     frameworks=$(dotnet msbuild "$project" -getProperty:TargetFrameworks -nologo)
     expected_folders=$(tr ';' '\n' <<< "$frameworks" | sed -n 's|^ *\([^ ]\{1,\}\) *$|lib/\1|p' | sort -u)
@@ -52,6 +53,21 @@ release_build_writes_no_runtimeconfig() {
   done < <(find "$root"/src/*/bin/Release -name '*.runtimeconfig.json')
 }
 
+# Print pack diagnostics before the EXIT trap deletes $feed when any package is missing.
+dump_missing_package_diagnostics() {
+  echo "=== missing-package diagnostics ==="
+  echo "dotnet: $(command -v dotnet || echo missing) ($(dotnet --version 2>&1 || true))"
+  echo "TMPDIR: ${TMPDIR:-<unset>}"
+  echo "feed: $feed"
+  echo "--- feed contents ---"
+  ls -la "$feed" 2>&1 || true
+  echo "--- pack.log ---"
+  cat "$feed/pack.log" 2>&1 || true
+}
+
 lib_folders_hold_only_assembly_and_docs
+if (( missing_package )); then
+  dump_missing_package_diagnostics
+fi
 release_build_writes_no_runtimeconfig
 exit $failed
