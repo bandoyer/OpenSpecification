@@ -39,6 +39,9 @@ public class Repository_GroupByTests(TestFactory factory) : IntegrationTest(fact
     private sealed class CountryFactoryRepository(IDbContextFactory<TestDbContext> factory)
         : ContextFactoryRepositoryBaseOfT<Country, TestDbContext>(factory);
 
+    private sealed class StoreFactoryRepository(IDbContextFactory<TestDbContext> factory)
+        : ContextFactoryRepositoryBaseOfT<Store, TestDbContext>(factory);
+
     [Fact]
     public async Task SingleKey_AggregatesAndQueryShapingFlags_WorkAcrossRepositoryFactoryAndDbSet()
     {
@@ -289,6 +292,203 @@ public class Repository_GroupByTests(TestFactory factory) : IntegrationTest(fact
         orderedSource.Query.OrderBy(c => c.Id);
         await FluentActions.Awaiting(() => repo.ListAsync(orderedSource.WithProjectionOf(groupedTemplate)))
             .Should().ThrowAsync<NotSupportedException>();
+    }
+
+    [Fact]
+    public async Task HavingAndPostGroupOrdering_TranslateAndMatchAcrossRepositoryFactoryAndDbSet()
+    {
+        var companyIds = await SeedStoresForHavingAndOrderingAsync();
+        var repo = new Repository<Store>(DbContext);
+        var factoryRepo = new StoreFactoryRepository(_contextFactory);
+
+        // Multiple Having predicates (AND semantics), conditional false no-op, and OrderBy -> Having order.
+        var havingSpec = new Specification<Store, StoreAggregate>();
+        havingSpec.Query
+            .GroupBy(s => new { s.CompanyId, s.City })
+            .Having(g => g.Count() >= 2)
+            .Having(g => g.Count() > 99, condition: false)
+            .Having(g => g.Sum(s => s.Id) > 0)
+            .OrderByDescending(g => g.Count())
+            .ThenBy(g => g.Key.City)
+            .Select(g => new StoreAggregate { CompanyId = g.Key.CompanyId, City = g.Key.City, Count = g.Count() });
+
+        var orderThenHavingSpec = new Specification<Store, StoreAggregate>();
+        orderThenHavingSpec.Query
+            .GroupBy(s => new { s.CompanyId, s.City })
+            .OrderByDescending(g => g.Count())
+            .Having(g => g.Count() >= 2)
+            .Having(g => g.Sum(s => s.Id) > 0)
+            .Select(g => new StoreAggregate { CompanyId = g.Key.CompanyId, City = g.Key.City, Count = g.Count() });
+
+        // Strongly typed multi-level ordering by unprojected value-type aggregates and composite key members.
+        var unprojectedAggOrderSpec = new Specification<Store, string>();
+        unprojectedAggOrderSpec.Query
+            .GroupBy(s => new { s.CompanyId, s.City })
+            .OrderByDescending(g => g.Count())
+            .ThenBy(g => g.Key.CompanyId)
+            .ThenByDescending(g => g.Max(s => s.Id))
+            .Select(g => g.Key.City!);
+
+        var avgOrderSpec = new Specification<Store, string>();
+        avgOrderSpec.Query
+            .GroupBy(s => s.City)
+            .OrderBy(g => g.Average(s => s.CompanyId))
+            .ThenBy(g => g.Key)
+            .Select(g => g.Key!);
+
+        // Conditional discarded primary chain and nested ThenBy(false) with saved handle.
+        var discardedPrimarySpec = new Specification<Store, string>();
+        discardedPrimarySpec.Query
+            .GroupBy(s => s.City)
+            .OrderBy(g => g.Key, condition: false)
+            .ThenByDescending(g => g.Count())
+            .OrderByDescending(g => g.Count(), condition: true)
+            .ThenBy(g => g.Key)
+            .Select(g => g.Key!);
+
+        var nestedDiscardSpec = new Specification<Store, string>();
+        var activeHandle = nestedDiscardSpec.Query
+            .GroupBy(s => new { s.CompanyId, s.City })
+            .OrderByDescending(g => g.Count());
+        activeHandle
+            .ThenBy(g => g.Key.City, condition: false)
+            .ThenByDescending(g => g.Key.CompanyId);
+        activeHandle
+            .ThenBy(g => g.Key.CompanyId)
+            .ThenBy(g => g.Key.City)
+            .Select(g => $"{g.Key.CompanyId}:{g.Key.City}");
+
+        var emptySpec = new Specification<Store, string>();
+        emptySpec.Query
+            .Where(s => s.Id < 0)
+            .GroupBy(s => s.City)
+            .Having(g => g.Count() > 0)
+            .OrderByDescending(g => g.Count())
+            .ThenBy(g => g.Key)
+            .Select(g => g.Key!);
+
+        var havingList = await repo.ListAsync(havingSpec);
+        var orderThenHavingList = await repo.ListAsync(orderThenHavingSpec);
+        var aggList = await repo.ListAsync(unprojectedAggOrderSpec);
+        var aggDbSetList = await DbContext.Stores.ToListAsync(unprojectedAggOrderSpec);
+        var aggDbSetEnum = (await DbContext.Stores.ToEnumerableAsync(unprojectedAggOrderSpec)).ToList();
+        var aggWithSpec = await DbContext.Stores.WithSpecification(unprojectedAggOrderSpec).ToListAsync();
+        var aggFirst = await repo.FirstOrDefaultAsync(unprojectedAggOrderSpec);
+        var aggStream = new List<string>();
+        await foreach (var item in repo.AsAsyncEnumerable(unprojectedAggOrderSpec)) aggStream.Add(item);
+        var aggFactoryStream = new List<string>();
+        await foreach (var item in factoryRepo.AsAsyncEnumerable(unprojectedAggOrderSpec)) aggFactoryStream.Add(item);
+        var aggDbSetStream = new List<string>();
+        await foreach (var item in DbContext.Stores.AsAsyncEnumerable(unprojectedAggOrderSpec)) aggDbSetStream.Add(item);
+
+        var avgList = await repo.ListAsync(avgOrderSpec);
+        var discardedList = await repo.ListAsync(discardedPrimarySpec);
+        var nestedDiscardList = await repo.ListAsync(nestedDiscardSpec);
+        var emptyList = await repo.ListAsync(emptySpec);
+
+        havingList.Should().BeEquivalentTo(
+        [
+            new StoreAggregate { CompanyId = companyIds.Beta, City = "Denver", Count = 3 },
+            new StoreAggregate { CompanyId = companyIds.Alpha, City = "Austin", Count = 2 },
+        ], o => o.WithStrictOrdering());
+        orderThenHavingList.Should().BeEquivalentTo(havingList, o => o.WithStrictOrdering());
+
+        aggList.Should().Equal("Denver", "Austin", "Dallas", "Austin");
+        aggDbSetList.Should().Equal(aggList);
+        aggDbSetEnum.Should().Equal(aggList);
+        aggWithSpec.Should().Equal(aggList);
+        aggStream.Should().Equal(aggList);
+        aggFactoryStream.Should().Equal(aggList);
+        aggDbSetStream.Should().Equal(aggList);
+        aggFirst.Should().Be("Denver");
+
+        avgList.Should().Equal("Dallas", "Austin", "Denver");
+        discardedList.Should().Equal("Austin", "Denver", "Dallas");
+        nestedDiscardList.Should().Equal(
+            $"{companyIds.Beta}:Denver",
+            $"{companyIds.Alpha}:Austin",
+            $"{companyIds.Alpha}:Dallas",
+            $"{companyIds.Beta}:Austin");
+        emptyList.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task DuplicatePrimaryGroupOrderChain_ThrowsAtEvaluationTime_AndWithProjectionOfClonesHavingAndOrder()
+    {
+        await SeedCountriesAsync();
+        var repo = new Repository<Country>(DbContext);
+
+        var directDup = new Specification<Country, string?>();
+        directDup.Query
+            .GroupBy(c => c.Name)
+            .OrderBy(g => g.Key)
+            .OrderByDescending(g => g.Count())
+            .Select(g => g.Key);
+
+        var acrossHavingDup = new Specification<Country, string?>();
+        acrossHavingDup.Query
+            .GroupBy(c => c.Name)
+            .OrderBy(g => g.Key)
+            .Having(g => g.Count() > 0)
+            .OrderByDescending(g => g.Count())
+            .Select(g => g.Key);
+
+        var oneActiveOneFalse = new Specification<Country, string?>();
+        oneActiveOneFalse.Query
+            .Where(c => c.Name!.StartsWith("Grp-"))
+            .GroupBy(c => c.Name)
+            .OrderByDescending(g => g.Key, true)
+            .OrderBy(g => g.Count(), false)
+            .Select(g => g.Key);
+
+        await FluentActions.Awaiting(() => repo.ListAsync(directDup)).Should().ThrowAsync<DuplicateOrderChainException>();
+        await FluentActions.Awaiting(() => DbContext.Countries.ToListAsync(directDup)).Should().ThrowAsync<DuplicateOrderChainException>();
+        await FluentActions.Awaiting(() => repo.ListAsync(acrossHavingDup)).Should().ThrowAsync<DuplicateOrderChainException>();
+        (await repo.ListAsync(oneActiveOneFalse)).Should().Equal("Grp-B", "Grp-A");
+
+        var source = new Specification<Country>();
+        source.Query.Where(c => c.Name!.StartsWith("Grp-"));
+
+        var template = new Specification<Country, string?>();
+        var templateGrouped = template.Query
+            .GroupBy(c => c.Name)
+            .Having(g => g.Count() >= 2);
+        templateGrouped.OrderBy(g => g.Key).Select(g => g.Key);
+
+        var composed = source.WithProjectionOf(template);
+        templateGrouped.Having(g => g.Sum(c => c.No) >= 60);
+        templateGrouped.OrderByDescending(g => g.Sum(c => c.No));
+
+        (await repo.ListAsync(composed)).Should().Equal("Grp-A", "Grp-B");
+        await FluentActions.Awaiting(() => repo.ListAsync(template)).Should().ThrowAsync<DuplicateOrderChainException>();
+    }
+
+    private async Task<(int Alpha, int Beta)> SeedStoresForHavingAndOrderingAsync()
+    {
+        var country = new Country { Name = "US", No = 1 };
+        await SeedAsync(country);
+
+        var alpha = new Company { Name = "Alpha", CountryId = country.Id };
+        var beta = new Company { Name = "Beta", CountryId = country.Id };
+        await SeedRangeAsync([alpha, beta]);
+
+        // Composite groups:
+        // (Beta, Denver): Count=3
+        // (Alpha, Austin): Count=2
+        // (Alpha, Dallas): Count=1
+        // (Beta, Austin): Count=1
+        // By City: Austin=3 (avg CompanyId = (2*alpha+beta)/3), Denver=3 (avg = beta), Dallas=1 (avg = alpha)
+        await SeedRangeAsync([
+            new Store { Name = "S1", City = "Austin", CompanyId = alpha.Id },
+            new Store { Name = "S2", City = "Austin", CompanyId = alpha.Id },
+            new Store { Name = "S3", City = "Dallas", CompanyId = alpha.Id },
+            new Store { Name = "S4", City = "Austin", CompanyId = beta.Id },
+            new Store { Name = "S5", City = "Denver", CompanyId = beta.Id },
+            new Store { Name = "S6", City = "Denver", CompanyId = beta.Id },
+            new Store { Name = "S7", City = "Denver", CompanyId = beta.Id },
+        ]);
+
+        return (alpha.Id, beta.Id);
     }
 
     private async Task SeedCountriesAsync()

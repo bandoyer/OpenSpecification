@@ -271,4 +271,165 @@ public class GroupByInMemoryTests
         spec.IsSatisfiedBy(new(1, "North", "A", 10)).Should().BeTrue();
         spec.IsSatisfiedBy(new(2, "South", "A", 10)).Should().BeFalse();
     }
+
+    [Fact]
+    public void Having_MultiplePredicatesCombineWithAnd_AndFalseConditionIsNoOpWithoutDiscardingSubsequentClauses()
+    {
+        var orders = new List<Order>
+        {
+            new(1, "North", "Cat-A", 10),
+            new(2, "North", "Cat-A", 20), // Count=2, Sum=30
+            new(3, "North", "Cat-B", 25),
+            new(4, "North", "Cat-B", 35), // Count=2, Sum=60
+            new(5, "North", "Cat-C", 90), // Count=1, Sum=90
+        };
+
+        var spec = new Specification<Order, string>();
+        spec.Query
+            .GroupBy(o => o.Category)
+            .Having(g => g.Count() >= 2)
+            .Having(g => g.Count() > 99, condition: false)
+            .Having(g => g.Sum(o => o.Amount) >= 50)
+            .Select(g => $"{g.Key}:{g.Count()}/{g.Sum(o => o.Amount)}");
+
+        spec.Evaluate(orders).Should().Equal("Cat-B:2/60");
+
+        // Single-Having fast path (OneOrMany single item).
+        var singleHavingSpec = new Specification<Order, string>();
+        singleHavingSpec.Query
+            .GroupBy(o => o.Category)
+            .Having(g => g.Sum(o => o.Amount) >= 60)
+            .OrderByDescending(g => g.Sum(o => o.Amount))
+            .Select(g => g.Key);
+
+        singleHavingSpec.Evaluate(orders).Should().Equal("Cat-C", "Cat-B");
+
+        // OrderByDescending(false).ThenByDescending(...) discards continuation without affecting sibling chain.
+        var descDiscardSpec = new Specification<Order, string>();
+        descDiscardSpec.Query
+            .GroupBy(o => o.Category)
+            .OrderByDescending(g => g.Count(), false)
+            .ThenByDescending(g => g.Key)
+            .OrderBy(g => g.Key, true)
+            .Select(g => g.Key);
+
+        descDiscardSpec.Evaluate(orders).Should().Equal("Cat-A", "Cat-B", "Cat-C");
+    }
+
+    [Fact]
+    public void OrderByAndThenBy_SortByGroupKeyCompositeMembersAndUnprojectedValueTypeAggregates()
+    {
+        var orders = new List<Order>
+        {
+            new(1, "Alpha", "Cat-1", 10),
+            new(2, "Alpha", "Cat-1", 30), // Count=2, Sum=40, Max=30, Avg=20
+            new(3, "Alpha", "Cat-2", 20),
+            new(4, "Alpha", "Cat-2", 40), // Count=2, Sum=60, Max=40, Avg=30
+            new(5, "Beta", "Cat-1", 50),  // Count=1, Sum=50, Max=50, Avg=50
+            new(6, "Beta", "Cat-2", 60),
+            new(7, "Beta", "Cat-2", 80),  // Count=2, Sum=140, Max=80, Avg=70
+        };
+
+        var multiLevelSpec = new Specification<Order, string>();
+        multiLevelSpec.Query
+            .GroupBy(o => new { o.Region, o.Category })
+            .OrderByDescending(g => g.Count())
+            .ThenBy(g => g.Key.Region)
+            .ThenByDescending(g => g.Sum(o => o.Amount))
+            .Select(g => $"{g.Key.Region}/{g.Key.Category}");
+
+        var avgSpec = new Specification<Order, string>();
+        avgSpec.Query
+            .GroupBy(o => new { o.Region, o.Category })
+            .OrderBy(g => g.Average(o => o.Amount))
+            .Select(g => $"{g.Key.Region}/{g.Key.Category}");
+
+        var orderThenHavingSpec = new Specification<Order, string>();
+        orderThenHavingSpec.Query
+            .GroupBy(o => new { o.Region, o.Category })
+            .OrderByDescending(g => g.Max(o => o.Amount))
+            .Having(g => g.Count() >= 2)
+            .Having(g => g.Sum(o => o.Amount) >= 50)
+            .Select(g => $"{g.Key.Region}/{g.Key.Category}");
+
+        multiLevelSpec.Evaluate(orders).Should().Equal("Alpha/Cat-2", "Alpha/Cat-1", "Beta/Cat-2", "Beta/Cat-1");
+        // Repeated evaluation reuses lazily compiled delegates cleanly.
+        multiLevelSpec.Evaluate(orders).Should().Equal("Alpha/Cat-2", "Alpha/Cat-1", "Beta/Cat-2", "Beta/Cat-1");
+        avgSpec.Evaluate(orders).Should().Equal("Alpha/Cat-1", "Alpha/Cat-2", "Beta/Cat-1", "Beta/Cat-2");
+        orderThenHavingSpec.Evaluate(orders).Should().Equal("Beta/Cat-2", "Alpha/Cat-2");
+        multiLevelSpec.Evaluate([]).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void DuplicatePrimaryGroupOrderChains_ThrowDuplicateOrderChainExceptionAtEvaluationTime()
+    {
+        var orders = new List<Order> { new(1, "Alpha", "Cat-1", 10), new(2, "Beta", "Cat-2", 20) };
+
+        var directDup = new Specification<Order, string>();
+        directDup.Query
+            .GroupBy(o => o.Category)
+            .OrderBy(g => g.Key)
+            .OrderByDescending(g => g.Count())
+            .Select(g => g.Key);
+
+        var acrossHavingDup = new Specification<Order, string>();
+        acrossHavingDup.Query
+            .GroupBy(o => o.Category)
+            .OrderBy(g => g.Key)
+            .Having(g => g.Count() > 0)
+            .OrderByDescending(g => g.Count())
+            .Select(g => g.Key);
+
+        var oneActiveOneFalse = new Specification<Order, string>();
+        oneActiveOneFalse.Query
+            .GroupBy(o => o.Category)
+            .OrderBy(g => g.Key, true)
+            .OrderByDescending(g => g.Count(), false)
+            .Select(g => g.Key);
+
+        Action a1 = () => directDup.Evaluate(orders);
+        Action a2 = () => acrossHavingDup.Evaluate(orders);
+
+        a1.Should().Throw<DuplicateOrderChainException>();
+        a2.Should().Throw<DuplicateOrderChainException>();
+        oneActiveOneFalse.Evaluate(orders).Should().Equal("Cat-1", "Cat-2");
+    }
+
+    [Fact]
+    public void WithProjectionOf_ClonesHavingAndOrderStepsWithoutStateLeakage()
+    {
+        var orders = new List<Order>
+        {
+            new(1, "North", "Cat-A", 10),
+            new(2, "North", "Cat-A", 20),
+            new(3, "North", "Cat-B", 30),
+            new(4, "North", "Cat-B", 40),
+            new(5, "North", "Cat-B", 50),
+            new(6, "South", "Cat-C", 99),
+        };
+
+        var source = new Specification<Order>();
+        source.Query.Where(o => o.Region == "North");
+
+        var template = new Specification<Order, string>();
+        var templateGrouped = template.Query
+            .GroupBy(o => o.Category)
+            .Having(g => g.Count() >= 2)
+            .Having(g => g.Sum(o => o.Amount) >= 30);
+        var templateOrdered = templateGrouped
+            .OrderBy(g => g.Count())
+            .ThenBy(g => g.Key);
+        templateOrdered.Select(g => g.Key);
+
+        var composed = source.WithProjectionOf(template);
+
+        // Mutating template's Having predicates and Order steps after cloning must not leak into composed.
+        templateGrouped.Having(g => g.Count() >= 3);
+        templateOrdered.ThenByDescending(g => g.Count());
+        templateGrouped.OrderByDescending(g => g.Sum(o => o.Amount));
+
+        composed.Evaluate(orders).Should().Equal("Cat-A", "Cat-B");
+        Action evalMutatedTemplate = () => template.Evaluate(orders);
+        evalMutatedTemplate.Should().Throw<DuplicateOrderChainException>();
+    }
 }

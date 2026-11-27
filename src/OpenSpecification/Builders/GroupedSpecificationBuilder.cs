@@ -15,6 +15,17 @@ public interface IGroupedSpecificationBuilder<T, TKey, TResult>
 }
 
 /// <summary>
+/// Represents an ordered grouped specification builder after group-level <c>OrderBy</c> or <c>OrderByDescending</c>.
+/// </summary>
+/// <typeparam name="T">The type of the entity.</typeparam>
+/// <typeparam name="TKey">The type of the grouping key.</typeparam>
+/// <typeparam name="TResult">The type of the projected result.</typeparam>
+public interface IOrderedGroupedSpecificationBuilder<T, TKey, TResult>
+    : IGroupedSpecificationBuilder<T, TKey, TResult>
+{
+}
+
+/// <summary>
 /// Represents a specification builder in the post-projection stage after grouped <c>Select</c>.
 /// </summary>
 /// <typeparam name="T">The type of the entity.</typeparam>
@@ -27,7 +38,7 @@ public interface IGroupedResultSpecificationBuilder<T, TResult>
     Specification<T, TResult> Specification { get; }
 }
 
-internal sealed class GroupedSpecificationBuilder<T, TKey, TResult>
+internal class GroupedSpecificationBuilder<T, TKey, TResult>
     : IGroupedSpecificationBuilder<T, TKey, TResult>
 {
     public Specification<T, TResult> Specification { get; }
@@ -39,6 +50,21 @@ internal sealed class GroupedSpecificationBuilder<T, TKey, TResult>
     {
         Specification = specification;
         Plan = plan;
+    }
+}
+
+internal sealed class OrderedGroupedSpecificationBuilder<T, TKey, TResult>
+    : GroupedSpecificationBuilder<T, TKey, TResult>, IOrderedGroupedSpecificationBuilder<T, TKey, TResult>
+{
+    internal bool IsChainDiscarded { get; }
+
+    public OrderedGroupedSpecificationBuilder(
+        Specification<T, TResult> specification,
+        GroupingStagePlan<T, TKey, TResult> plan,
+        bool isChainDiscarded = false)
+        : base(specification, plan)
+    {
+        IsChainDiscarded = isChainDiscarded;
     }
 }
 
