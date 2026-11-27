@@ -4,11 +4,16 @@
 # its .xml docs, and no project's Release build may write a runtimeconfig.json, which only an app's host reads.
 set -euo pipefail
 
+# Disable MSBuild node reuse / build servers so packing into a private TMPDIR (e.g. inside a bwrap sandbox)
+# cannot hand work to a lingering MSBuild worker in another mount namespace.
+export MSBUILDDISABLENODEREUSE=1
+export DOTNET_CLI_USE_MSBUILD_SERVER=0
+
 root=$(cd "$(dirname "$0")/.." && pwd)
 feed=$(mktemp -d "${TMPDIR:-/tmp}/package-contents.XXXXXX")
 trap 'rm -rf -- "$feed"' EXIT
 
-dotnet pack "$root/ci.slnf" --configuration Release --no-build --output "$feed" -nologo -tl:off > "$feed/pack.log" 2>&1 \
+dotnet pack "$root/ci.slnf" --configuration Release --no-build --disable-build-servers --output "$feed" -nologo -tl:off > "$feed/pack.log" 2>&1 \
   || { cat "$feed/pack.log"; echo "FAIL: dotnet pack failed; build ci.slnf in Release first"; exit 1; }
 
 failed=0
@@ -23,7 +28,7 @@ lib_folders_hold_only_assembly_and_docs() {
     if [[ -z $nupkg ]]; then
       echo "FAIL $id: no package"; failed=1; continue
     fi
-    frameworks=$(dotnet msbuild "$project" -getProperty:TargetFrameworks -nologo)
+    frameworks=$(dotnet msbuild "$project" -nr:false -getProperty:TargetFrameworks -nologo)
     expected_folders=$(tr ';' '\n' <<< "$frameworks" | sed -n 's|^ *\([^ ]\{1,\}\) *$|lib/\1|p' | sort -u)
     if [[ -z $expected_folders ]]; then
       echo "FAIL $id: its project names no TargetFrameworks"; failed=1; continue
