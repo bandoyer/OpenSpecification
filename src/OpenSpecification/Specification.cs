@@ -20,6 +20,8 @@ public class Specification<T, TResult> : Specification<T>, ISpecification<T, TRe
     /// <inheritdoc/>
     public new Func<IEnumerable<TResult>, IEnumerable<TResult>>? PostProcessingAction { get; internal set; } = null;
 
+    internal IGroupByPlan<T, TResult>? GroupByPlan { get; set; }
+
     internal override bool IsProjection => true;
 
     /// <inheritdoc/>

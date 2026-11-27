@@ -45,6 +45,26 @@ public class InMemorySpecificationEvaluator : IInMemorySpecificationEvaluator
     /// <inheritdoc/>
     public virtual IEnumerable<TResult> Evaluate<T, TResult>(IEnumerable<T> source, ISpecification<T, TResult> specification)
     {
+        if (GroupByHelper.GetPlan(specification) is { } groupByPlan)
+        {
+            GroupByHelper.Validate(specification, groupByPlan);
+
+            var criteriaSource = source;
+            foreach (var evaluator in Evaluators)
+            {
+                if (evaluator is IEvaluator { IsCriteriaEvaluator: false } or DistinctEvaluator)
+                    continue;
+
+                criteriaSource = evaluator.Evaluate(criteriaSource, specification);
+            }
+
+            var groupedQuery = groupByPlan.Apply(criteriaSource);
+
+            return specification.PostProcessingAction is null
+                ? groupedQuery
+                : specification.PostProcessingAction(groupedQuery);
+        }
+
         if (specification.Selector is null && specification.SelectorMany is null) throw new SelectorNotFoundException();
         if (specification.Selector != null && specification.SelectorMany != null) throw new ConcurrentSelectorsException();
 

@@ -33,6 +33,9 @@ internal static class PagedQuery
       PaginationSettings settings,
       CancellationToken cancellationToken)
     {
+        if (GroupByHelper.GetPlan(specification) is not null)
+            throw new NotSupportedException("Paging grouped specifications is not yet supported.");
+
         if (specification.SelectorMany is not null)
             throw new NotSupportedException("EF6 can't page a SelectMany specification, since it can't Skip the flattened rows, which a specification can't order. Use a Select specification, or page the entities.");
 

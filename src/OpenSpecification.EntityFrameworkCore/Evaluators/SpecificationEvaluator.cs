@@ -42,6 +42,14 @@ public class SpecificationEvaluator : ISpecificationEvaluator
     public virtual IQueryable<TResult> GetQuery<T, TResult>(IQueryable<T> query, ISpecification<T, TResult> specification) where T : class
     {
         ArgumentNullException.ThrowIfNull(specification);
+
+        if (GroupByHelper.GetPlan(specification) is { } groupByPlan)
+        {
+            GroupByHelper.Validate(specification, groupByPlan);
+            query = GetQuery(query, (ISpecification<T>)specification, evaluateCriteriaOnly: true);
+            return groupByPlan.Apply(query);
+        }
+
         if (specification.Selector is null && specification.SelectorMany is null) throw new SelectorNotFoundException();
         if (specification.Selector is not null && specification.SelectorMany is not null) throw new ConcurrentSelectorsException();
 
