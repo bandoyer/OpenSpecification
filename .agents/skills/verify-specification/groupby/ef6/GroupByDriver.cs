@@ -1,9 +1,9 @@
-// Drives #99's core GroupBy().Select() support through the EF6 provider and In-Memory evaluator:
-// single-key and composite-key (anonymous and member-initialized record/DTO) grouped projections with
-// Count/Sum/Min/Max/Average, pre-group Where/Search/AsNoTracking, empty and constant-key groups,
+// Drives #99, #100, and #101's GroupBy support through the EF6 provider and In-Memory evaluator:
+// single-key and composite-key grouped projections, Having, strongly typed OrderBy/ThenBy,
+// group Skip/Take, post-group Distinct, grouped PagedListAsync/ToPagedListAsync (and EF6 fail-fast guards),
 // PostProcessingAction (list-only), EnableCache/WithCacheKey, builder/evaluator conflict validation,
-// interim Distinct/PagedListAsync guards, WithProjectionOf cloning, custom evaluator inheritance,
-// IsSatisfiedBy/upcast criteria-only behavior, and 10.x contract checks.
+// WithProjectionOf cloning, custom evaluator inheritance, IsSatisfiedBy/upcast criteria-only behavior,
+// and 10.x contract checks.
 using System.Data.Entity;
 using System.Data.SqlClient;
 using System.Globalization;
@@ -65,6 +65,7 @@ static class GroupByDriver
         RunContractSurface();
         await RunSingleAndCompositeGroups(connectionString);
         await RunHavingAndOrdering(connectionString);
+        await RunSkipTakeDistinctAndPaging(connectionString);
         await RunPostProcessingAndCache(connectionString);
         await RunValidationAndConflicts(connectionString);
         await RunCompositionAndCustomEvaluators(connectionString);
@@ -383,6 +384,267 @@ static class GroupByDriver
         Console.WriteLine($"having-and-ordering: having=[{havingStr}]; havingMatch={havingMatch}; aggOrder=[{aggStr}]; aggSurfacesMatch={aggSurfacesMatch}; avg=[{string.Join(",", avgList)}]; max=[{string.Join(",", maxList)}]; avgMaxMatch={avgMaxMatch}; discardedPrimary=[{string.Join(",", discardedPrimaryList)}]; nestedDiscard=[{string.Join(",", nestedDiscardList)}]; chainIsolationMatch={chainIsolationMatch}; empty={emptyCountSql}/{emptyCountMem}; dupOrder={dupOrderOk}/sql={dupOrderSql}; oneActive=[{string.Join(",", oneActiveOrderList)}]; nullGuards={nullGuardsOk}/inactiveCount={inactiveNullCount}; cloneNoLeak={cloneNoLeak}");
     }
 
+    private static async Task RunSkipTakeDistinctAndPaging(string connectionString)
+    {
+        var preSelectSliceSpec = new Specification<Product, string>();
+        preSelectSliceSpec.Query
+            .GroupBy(p => new { CompanyName = p.Company.Name, p.Category })
+            .OrderByDescending(g => g.Sum(p => p.Price))
+            .Skip(99, condition: false)
+            .Take(0, condition: false)
+            .Skip(1)
+            .Take(2)
+            .Select(g => g.Key.CompanyName + "/" + g.Key.Category);
+
+        var postSelectSliceSpec = new Specification<Product, string>();
+        postSelectSliceSpec.Query
+            .GroupBy(p => new { CompanyName = p.Company.Name, p.Category })
+            .OrderByDescending(g => g.Sum(p => p.Price))
+            .Select(g => g.Key.CompanyName + "/" + g.Key.Category)
+            .Skip(99, condition: false)
+            .Take(0, condition: false)
+            .Skip(1)
+            .Take(2);
+
+        var skipZeroSpec = new Specification<Product, string>();
+        skipZeroSpec.Query
+            .GroupBy(p => new { CompanyName = p.Company.Name, p.Category })
+            .OrderByDescending(g => g.Sum(p => p.Price))
+            .Skip(0)
+            .Select(g => g.Key.CompanyName + "/" + g.Key.Category);
+
+        var takeZeroSpec = new Specification<Product, string>();
+        takeZeroSpec.Query
+            .GroupBy(p => new { CompanyName = p.Company.Name, p.Category })
+            .OrderByDescending(g => g.Sum(p => p.Price))
+            .Select(g => g.Key.CompanyName + "/" + g.Key.Category)
+            .Take(0);
+
+        var dupSliceGuardsOk = Throws<DuplicateSkipException>(() =>
+        {
+            var s = new Specification<Product, string>();
+            s.Query.GroupBy(p => p.Category).Skip(1).Skip(2);
+        }) && Throws<DuplicateSkipException>(() =>
+        {
+            var s = new Specification<Product, string>();
+            s.Query.GroupBy(p => p.Category).Skip(1).Select(g => g.Key).Skip(2);
+        }) && Throws<DuplicateSkipException>(() =>
+        {
+            var s = new Specification<Product, string>();
+            s.Query.GroupBy(p => p.Category).Select(g => g.Key).Skip(1).Skip(2);
+        }) && Throws<DuplicateTakeException>(() =>
+        {
+            var s = new Specification<Product, string>();
+            s.Query.GroupBy(p => p.Category).Take(2).Take(1);
+        }) && Throws<DuplicateTakeException>(() =>
+        {
+            var s = new Specification<Product, string>();
+            s.Query.GroupBy(p => p.Category).Take(2).Select(g => g.Key).Take(1);
+        }) && Throws<DuplicateTakeException>(() =>
+        {
+            var s = new Specification<Product, string>();
+            s.Query.GroupBy(p => p.Category).Select(g => g.Key).Take(2).Take(1);
+        });
+
+        var nullGuardsOk = Throws<ArgumentNullException>(() => ((IGroupedSpecificationBuilder<Product, string, string>)null!).Skip(1))
+            && Throws<ArgumentNullException>(() => ((IGroupedSpecificationBuilder<Product, string, string>)null!).Take(1))
+            && Throws<ArgumentNullException>(() => ((IGroupedResultSpecificationBuilder<Product, string>)null!).Skip(1))
+            && Throws<ArgumentNullException>(() => ((IGroupedResultSpecificationBuilder<Product, string>)null!).Take(1))
+            && Throws<ArgumentNullException>(() => ((IGroupedResultSpecificationBuilder<Product, string>)null!).Distinct());
+
+        var postDistinctSpec = new Specification<Product, int>();
+        postDistinctSpec.Query
+            .GroupBy(p => new { CompanyName = p.Company.Name, p.Category })
+            .Select(g => g.Count())
+            .Distinct();
+
+        var preDistinctSpec = new Specification<Product, int>();
+        preDistinctSpec.Query
+            .Distinct()
+            .GroupBy(p => new { CompanyName = p.Company.Name, p.Category })
+            .Select(g => g.Count());
+
+        var distinctFalseSpec = new Specification<Product, int>();
+        distinctFalseSpec.Query
+            .GroupBy(p => new { CompanyName = p.Company.Name, p.Category })
+            .Select(g => g.Count())
+            .Distinct(condition: false);
+
+        var distinctBeforeTakeSpec = new Specification<Product, int>();
+        distinctBeforeTakeSpec.Query
+            .GroupBy(p => new { CompanyName = p.Company.Name, p.Category })
+            .Select(g => g.Count())
+            .Distinct()
+            .Take(3);
+
+        var orderDistinctPostSpec = new Specification<Product, int>();
+        orderDistinctPostSpec.Query
+            .GroupBy(p => p.Category)
+            .OrderBy(g => g.Key)
+            .Select(g => g.Count())
+            .Distinct();
+
+        var orderDistinctPreSpec = new Specification<Product, int>();
+        orderDistinctPreSpec.Query
+            .Distinct()
+            .GroupBy(p => p.Category)
+            .OrderByDescending(g => g.Count())
+            .Select(g => g.Count());
+
+        var inactiveOrderDistinctSpec = new Specification<Product, int>();
+        inactiveOrderDistinctSpec.Query
+            .GroupBy(p => new { CompanyName = p.Company.Name, p.Category })
+            .OrderBy(g => g.Key.Category, condition: false)
+            .Select(g => g.Count())
+            .Distinct();
+
+        var orderedPagedSpec = new Specification<Product, string>();
+        orderedPagedSpec.Query
+            .GroupBy(p => new { CompanyName = p.Company.Name, p.Category })
+            .OrderByDescending(g => g.Sum(p => p.Price))
+            .Select(g => g.Key.CompanyName + "/" + g.Key.Category)
+            .PostProcessingAction(items => items.Reverse());
+
+        var havingPagedSpec = new Specification<Product, string>();
+        havingPagedSpec.Query
+            .GroupBy(p => new { CompanyName = p.Company.Name, p.Category })
+            .Having(g => g.Sum(p => p.Price) >= 50)
+            .OrderByDescending(g => g.Sum(p => p.Price))
+            .Select(g => g.Key.CompanyName + "/" + g.Key.Category);
+
+        var emptyPagedSpec = new Specification<Product, string>();
+        emptyPagedSpec.Query
+            .Where(p => p.Id < 0)
+            .GroupBy(p => p.Category)
+            .OrderBy(g => g.Key)
+            .Select(g => g.Key);
+
+        var unorderedPagedSpec = new Specification<Product, string>();
+        unorderedPagedSpec.Query
+            .GroupBy(p => new { CompanyName = p.Company.Name, p.Category })
+            .Select(g => g.Key.CompanyName + "/" + g.Key.Category);
+
+        var inactiveOrderPagedSpec = new Specification<Product, string>();
+        inactiveOrderPagedSpec.Query
+            .GroupBy(p => new { CompanyName = p.Company.Name, p.Category })
+            .OrderBy(g => g.Key.Category, condition: false)
+            .Select(g => g.Key.CompanyName + "/" + g.Key.Category);
+
+        var cloneSource = new Specification<Product>();
+        var cloneSliceTemplate = new Specification<Product, string>();
+        var cloneSliceResult = cloneSliceTemplate.Query
+            .GroupBy(p => new { CompanyName = p.Company.Name, p.Category })
+            .OrderByDescending(g => g.Sum(p => p.Price))
+            .Skip(1)
+            .Select(g => g.Key.CompanyName + "/" + g.Key.Category);
+        var clonedSlice = cloneSource.WithProjectionOf(cloneSliceTemplate);
+        cloneSliceResult.Take(1);
+
+        var cloneDistinctTemplate = new Specification<Product, int>();
+        cloneDistinctTemplate.Query
+            .GroupBy(p => new { CompanyName = p.Company.Name, p.Category })
+            .Select(g => g.Count())
+            .Distinct();
+        var clonedDistinct = cloneSource.WithProjectionOf(cloneDistinctTemplate);
+
+        using var db = new GroupByContext(connectionString);
+        var activeEntities = await db.Products.Include(p => p.Company).AsNoTracking().ToListAsync();
+
+        var sqlCommands = new List<string>();
+        db.Database.Log = msg => { if (msg.Contains("SELECT", StringComparison.OrdinalIgnoreCase)) sqlCommands.Add(msg); };
+        var repo = new ProductRepository(db);
+        var tenantAlphaRepo = new TenantAlphaProductRepository(db);
+        var smallPageRepo = new SmallPageProductRepository(db);
+
+        var preSliceSql = await repo.ListAsync(preSelectSliceSpec);
+        var postSliceSql = await repo.ListAsync(postSelectSliceSpec);
+        var preSliceMem = preSelectSliceSpec.Evaluate(activeEntities).ToList();
+        var postSliceMem = postSelectSliceSpec.Evaluate(activeEntities).ToList();
+        var sliceMatch = preSliceSql.SequenceEqual(["Alpha/Cat-2", "Beta/Cat-1"])
+            && postSliceSql.SequenceEqual(preSliceSql)
+            && preSliceMem.SequenceEqual(preSliceSql)
+            && postSliceMem.SequenceEqual(preSliceSql);
+
+        sqlCommands.Clear();
+        var skipZeroSql = await repo.ListAsync(skipZeroSpec);
+        var skipZeroNoOffset = sqlCommands.All(c => !c.Contains("OFFSET", StringComparison.OrdinalIgnoreCase) && !c.Contains("ROW_NUMBER", StringComparison.OrdinalIgnoreCase));
+        var skipZeroOk = skipZeroSql.Count == 4 && skipZeroNoOffset;
+        var takeZeroOk = (await repo.ListAsync(takeZeroSpec)).Count == 0 && !takeZeroSpec.Evaluate(activeEntities).Any();
+
+        var postDistinctSql = (await repo.ListAsync(postDistinctSpec)).OrderBy(x => x).ToList();
+        var preDistinctSql = (await repo.ListAsync(preDistinctSpec)).OrderBy(x => x).ToList();
+        var postDistinctMem = postDistinctSpec.Evaluate(activeEntities).OrderBy(x => x).ToList();
+        var preDistinctMem = preDistinctSpec.Evaluate(activeEntities).OrderBy(x => x).ToList();
+        var distinctFalseCount = (await repo.ListAsync(distinctFalseSpec)).Count;
+        var distinctTakeSql = (await repo.ListAsync(distinctBeforeTakeSpec)).Count;
+        var distinctTakeMem = distinctBeforeTakeSpec.Evaluate(activeEntities).Count();
+        var inactiveOrderDistinctSql = (await repo.ListAsync(inactiveOrderDistinctSpec)).OrderBy(x => x).ToList();
+        var distinctOk = postDistinctSpec.IsDistinct
+            && !distinctFalseSpec.IsDistinct
+            && postDistinctSql.SequenceEqual([1, 2])
+            && preDistinctSql.SequenceEqual([1, 2])
+            && postDistinctMem.SequenceEqual([1, 2])
+            && preDistinctMem.SequenceEqual([1, 2])
+            && distinctFalseCount == 4
+            && distinctTakeSql == 2 && distinctTakeMem == 2
+            && inactiveOrderDistinctSql.SequenceEqual([1, 2]);
+
+        sqlCommands.Clear();
+        var orderDistinctBlocked = Throws<NotSupportedException>(() => orderDistinctPostSpec.Evaluate(activeEntities).ToList())
+            && await ThrowsAsync<NotSupportedException>(() => repo.ListAsync(orderDistinctPostSpec))
+            && await ThrowsAsync<NotSupportedException>(() => db.Products.ToListAsync(orderDistinctPostSpec))
+            && Throws<NotSupportedException>(() => orderDistinctPreSpec.Evaluate(activeEntities).ToList())
+            && await ThrowsAsync<NotSupportedException>(() => repo.ListAsync(orderDistinctPreSpec));
+        var ensurePageableOk = await ThrowsArgSpecAsync(() => repo.PagedListAsync(preSelectSliceSpec, new PagingFilter { Page = 1, PageSize = 2 }))
+            && await ThrowsArgSpecAsync(() => repo.PagedListAsync(postSelectSliceSpec, new PagingFilter { Page = 1, PageSize = 2 }))
+            && await ThrowsArgSpecAsync(() => db.Products.ToPagedListAsync(takeZeroSpec, new PagingFilter { Page = 1, PageSize = 2 }));
+        var ef6UnsupportedPagingBlocked = await ThrowsAsync<NotSupportedException>(() => repo.PagedListAsync(unorderedPagedSpec, new PagingFilter { Page = 1, PageSize = 2 }))
+            && await ThrowsAsync<NotSupportedException>(() => repo.PagedListAsync(unorderedPagedSpec, new PagingFilter { Page = 2, PageSize = 2 }))
+            && await ThrowsAsync<NotSupportedException>(() => db.Products.ToPagedListAsync(inactiveOrderPagedSpec, new PagingFilter { Page = 1, PageSize = 2 }))
+            && await ThrowsAsync<NotSupportedException>(() => repo.PagedListAsync(postDistinctSpec, new PagingFilter { Page = 1, PageSize = 2 }))
+            && await ThrowsAsync<NotSupportedException>(() => repo.PagedListAsync(postDistinctSpec, new PagingFilter { Page = 2, PageSize = 2 }))
+            && await ThrowsAsync<NotSupportedException>(() => db.Products.ToPagedListAsync(preDistinctSpec, new PagingFilter { Page = 1, PageSize = 2 }));
+        var blockedSqlCount = sqlCommands.Count;
+
+        var skipZeroPaged = await repo.PagedListAsync(skipZeroSpec, new PagingFilter { Page = 1, PageSize = 2 });
+        var skipZeroPageableOk = skipZeroPaged.Pagination.TotalItems == 4 && skipZeroPaged.Items.Count == 2;
+
+        var p1 = await repo.PagedListAsync(orderedPagedSpec, new PagingFilter { Page = 1, PageSize = 2 });
+        var p2 = await repo.PagedListAsync(orderedPagedSpec, new PagingFilter { Page = 2, PageSize = 2 });
+        var pClamped = await repo.PagedListAsync(orderedPagedSpec, new PagingFilter { Page = 99, PageSize = 2 });
+        var p2DbSet = await db.Products.ToPagedListAsync(orderedPagedSpec, new PagingFilter { Page = 2, PageSize = 2 });
+        var pHaving = await repo.PagedListAsync(havingPagedSpec, new PagingFilter { Page = 2, PageSize = 2 });
+        var pEmpty = await repo.PagedListAsync(emptyPagedSpec, new PagingFilter { Page = 2, PageSize = 2 });
+        var pTenant1 = await tenantAlphaRepo.PagedListAsync(orderedPagedSpec, new PagingFilter { Page = 1, PageSize = 1 });
+        var pTenant2 = await tenantAlphaRepo.PagedListAsync(orderedPagedSpec, new PagingFilter { Page = 2, PageSize = 1 });
+        var pSmall = await smallPageRepo.PagedListAsync(orderedPagedSpec, new PagingFilter { Page = 1 });
+
+        var orderedPagingOk = p1.Items.SequenceEqual(["Beta/Cat-2", "Alpha/Cat-2"])
+            && p1.Pagination is { Page: 1, PageSize: 2, TotalItems: 4, TotalPages: 2, HasPrevious: false, HasNext: true }
+            && p2.Items.SequenceEqual(["Beta/Cat-1", "Alpha/Cat-1"])
+            && p2.Pagination is { Page: 2, PageSize: 2, TotalItems: 4, TotalPages: 2, HasPrevious: true, HasNext: false }
+            && pClamped.Items.SequenceEqual(["Beta/Cat-1", "Alpha/Cat-1"])
+            && pClamped.Pagination.Page == 2
+            && p2DbSet.Items.SequenceEqual(p2.Items) && p2DbSet.Pagination.TotalItems == 4
+            && pHaving.Items.SequenceEqual(["Beta/Cat-1"]) && pHaving.Pagination is { TotalItems: 3, TotalPages: 2 }
+            && pEmpty.Items.Count == 0 && pEmpty.Pagination is { Page: 1, TotalItems: 0, TotalPages: 1 }
+            && pTenant1.Items.SequenceEqual(["Alpha/Cat-2"]) && pTenant1.Pagination is { TotalItems: 2, TotalPages: 2 }
+            && pTenant2.Items.SequenceEqual(["Alpha/Cat-1"]) && pTenant2.Pagination is { TotalItems: 2, TotalPages: 2 }
+            && pSmall.Pagination is { PageSize: 2, TotalItems: 4, TotalPages: 2 };
+
+        var clonedSliceSql = await repo.ListAsync(clonedSlice);
+        var clonedSliceMem = clonedSlice.Evaluate(activeEntities).ToList();
+        var templateSliceSql = await repo.ListAsync(cloneSliceTemplate);
+        var clonedDistinctSql = (await repo.ListAsync(clonedDistinct)).OrderBy(x => x).ToList();
+        var cloneOk = clonedSliceSql.SequenceEqual(["Alpha/Cat-2", "Beta/Cat-1", "Alpha/Cat-1"])
+            && clonedSliceMem.SequenceEqual(clonedSliceSql)
+            && templateSliceSql.SequenceEqual(["Alpha/Cat-2"])
+            && clonedDistinct.IsDistinct
+            && clonedDistinctSql.SequenceEqual([1, 2]);
+
+        Console.WriteLine($"skip-take-distinct-paging: slice=[{string.Join(",", preSliceSql)}]/match={sliceMatch}; skip0={skipZeroOk}; take0={takeZeroOk}; dupGuards={dupSliceGuardsOk}; nullGuards={nullGuardsOk}; distinct={distinctOk}; orderDistinctBlocked={orderDistinctBlocked}; ensurePageable={ensurePageableOk}/skip0Pageable={skipZeroPageableOk}; ef6UnsupportedBlocked={ef6UnsupportedPagingBlocked}/blockedSql={blockedSqlCount}; orderedPaging={orderedPagingOk}; clone={cloneOk}");
+    }
+
     private static async Task RunPostProcessingAndCache(string connectionString)
     {
         var spec = new SingleResultSpecification<Product, string>();
@@ -464,9 +726,6 @@ static class GroupByDriver
         var preTakeSpec = new Specification<Product, string>();
         preTakeSpec.Query.Take(1).GroupBy(p => p.Category).Select(g => g.Key);
 
-        var distinctGroupedSpec = new Specification<Product, string>();
-        distinctGroupedSpec.Query.Distinct().GroupBy(p => p.Category).Select(g => g.Key);
-
         var includeIgnoredSpec = new Specification<Product, string>();
         includeIgnoredSpec.Query.Include(p => p.Company).Include("Company").GroupBy(p => p.Category).Select(g => g.Key);
 
@@ -497,18 +756,12 @@ static class GroupByDriver
             && Throws<NotSupportedException>(() => preTakeSpec.Evaluate(activeEntities).ToList())
             && await ThrowsAsync<NotSupportedException>(() => repo.ListAsync(preTakeSpec));
 
-        var interimDistinctOk = Throws<NotSupportedException>(() => distinctGroupedSpec.Evaluate(activeEntities).ToList())
-            && await ThrowsAsync<NotSupportedException>(() => repo.ListAsync(distinctGroupedSpec));
-
-        var interimPagedOk = await ThrowsAsync<NotSupportedException>(() => repo.PagedListAsync(dupSpec, new PagingFilter { Page = 1, PageSize = 2 }))
-            && await ThrowsAsync<NotSupportedException>(() => db.Products.ToPagedListAsync(dupSpec, new PagingFilter { Page = 1, PageSize = 2 }));
-
         var conflictSqlCount = sqlCommands.Count;
 
         var includeIgnoredOk = (await repo.ListAsync(includeIgnoredSpec)).OrderBy(x => x, StringComparer.Ordinal).SequenceEqual(["Cat-1", "Cat-2"])
             && includeIgnoredSpec.Evaluate(activeEntities).OrderBy(x => x, StringComparer.Ordinal).SequenceEqual(["Cat-1", "Cat-2"]);
 
-        Console.WriteLine($"validation-and-conflicts: dup={dupThrew}/{dupUnmutated}; missingSelect={missingSelectOk}; concurrent={concurrentOk}; preOrder={preOrderOk}; prePaging={prePagingOk}; interimDistinct={interimDistinctOk}; interimPaged={interimPagedOk}; conflictSql={conflictSqlCount}; includeIgnored={includeIgnoredOk}");
+        Console.WriteLine($"validation-and-conflicts: dup={dupThrew}/{dupUnmutated}; missingSelect={missingSelectOk}; concurrent={concurrentOk}; preOrder={preOrderOk}; prePaging={prePagingOk}; conflictSql={conflictSqlCount}; includeIgnored={includeIgnoredOk}");
     }
 
     private static async Task RunCompositionAndCustomEvaluators(string connectionString)
@@ -582,6 +835,12 @@ static class GroupByDriver
         try { await action(); return false; }
         catch (TEx) { return true; }
     }
+
+    private static async Task<bool> ThrowsArgSpecAsync(Func<Task> action)
+    {
+        try { await action(); return false; }
+        catch (ArgumentException ex) { return ex.ParamName == "specification"; }
+    }
 }
 
 public class CategorySummary
@@ -638,6 +897,18 @@ public class GroupByContext : DbContext
 }
 
 public class ProductRepository(DbContext dbContext) : RepositoryBase<Product>(dbContext);
+public class SmallPageProductRepository(DbContext dbContext) : RepositoryBase<Product>(dbContext)
+{
+    protected override PaginationSettings PaginationSettings { get; } = new(2, 3);
+}
+public class TenantAlphaProductRepository(DbContext dbContext) : RepositoryBase<Product>(dbContext)
+{
+    protected override IQueryable<Product> ApplySpecification(ISpecification<Product> specification, bool evaluateCriteriaOnly = false)
+        => SpecificationEvaluator.GetQuery(DbContext.Set<Product>().Where(p => p.Company.Name == "Alpha"), specification, evaluateCriteriaOnly);
+
+    protected override IQueryable<TResult> ApplySpecification<TResult>(ISpecification<Product, TResult> specification)
+        => SpecificationEvaluator.GetQuery(DbContext.Set<Product>().Where(p => p.Company.Name == "Alpha"), specification);
+}
 public class CustomEfSpecificationEvaluator() : SpecificationEvaluator([WhereEvaluator.Instance, SearchEvaluator.Instance, AsNoTrackingEvaluator.Instance]);
 public class CustomEvaluatorProductRepository(DbContext dbContext) : RepositoryBase<Product>(dbContext, new CustomEfSpecificationEvaluator());
 public class CustomInMemoryEvaluator() : InMemorySpecificationEvaluator([WhereEvaluator.Instance, SearchMemoryEvaluator.Instance]);
