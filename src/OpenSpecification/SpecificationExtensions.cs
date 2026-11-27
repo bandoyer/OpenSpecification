@@ -24,6 +24,7 @@ public static class SpecificationExtensions
         newSpec.SelectorMany = projectionSpec.SelectorMany;
         newSpec.PostProcessingAction = projectionSpec.PostProcessingAction;
         newSpec.IsDistinct = projectionSpec.IsDistinct;
+        newSpec.GroupByPlan = projectionSpec.GroupByPlan?.Clone();
         return newSpec;
     }
 }

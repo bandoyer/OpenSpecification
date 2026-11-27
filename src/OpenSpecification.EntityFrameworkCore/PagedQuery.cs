@@ -30,6 +30,11 @@ internal static class PagedQuery
       PaginationSettings settings,
       CancellationToken cancellationToken)
     {
+        if (GroupByHelper.GetPlan(specification) is not null)
+        {
+            throw new NotSupportedException("Paging grouped specifications is not yet supported.");
+        }
+
         if (DistinctEvaluator.IsDistinctSpecification(specification))
         {
             var countQuery = specification.Selector is not null
