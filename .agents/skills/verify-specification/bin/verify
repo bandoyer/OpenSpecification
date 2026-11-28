@@ -4,9 +4,11 @@
 set -euo pipefail
 
 SKILL_DIR=$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/.." && pwd)
-REPO_ROOT=$(git -C "$SKILL_DIR" rev-parse --show-toplevel)
+REPO_ROOT=$(realpath "$(git -C "$SKILL_DIR" rev-parse --show-toplevel)")
+REPO_ID=$(printf '%s' "$REPO_ROOT" | sha256sum | cut -c1-12)
 # The guard test sets its own root; any root must be a folder directly in /tmp named verify-specification-*.
-SCRATCH=${VERIFY_SPECIFICATION_SCRATCH:-/tmp/verify-specification-$(id -u)}
+# Defaulting per checkout keeps parallel sessions and review-proof clones from wiping each other's trees or consumers.
+SCRATCH=${VERIFY_SPECIFICATION_SCRATCH:-/tmp/verify-specification-$(id -u)-$REPO_ID}
 MARKER=.verify-made
 LOCK="$HOME/.cache/specification-spec-sql.lock"
 # The framework every project this helper writes targets, the consumers' unless --framework names another, and the
