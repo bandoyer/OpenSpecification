@@ -190,4 +190,29 @@ else
     fail "consumer from a day-old tree: exit $status, consumer made: $([[ -e $SCRATCH/consumers/aged ]] && echo yes || echo no), output: ${out//$'\n'/ | }"
 fi
 
+# Two separate checkouts must default to distinct scratch roots so bare `verify cleanup` in one
+# preserves the other's trees and consumers (retro pick from 2026-11-27-groupby-paging-distinct).
+REPO_ROOT=$(git -C "$HERE" rev-parse --show-toplevel)
+CLONE_A=$(mktemp -d /tmp/verify-specification-clone-a.XXXXXX)
+CLONE_B=$(mktemp -d /tmp/verify-specification-clone-b.XXXXXX)
+DECOYS+=("$CLONE_A" "$CLONE_B")
+git clone -q --shared "$REPO_ROOT" "$CLONE_A"
+git clone -q --shared "$REPO_ROOT" "$CLONE_B"
+cp "$V" "$CLONE_A/.agents/skills/verify-specification/bin/verify"
+cp "$V" "$CLONE_B/.agents/skills/verify-specification/bin/verify"
+VA="$CLONE_A/.agents/skills/verify-specification/bin/verify"
+VB="$CLONE_B/.agents/skills/verify-specification/bin/verify"
+TREE_A=$(env -u VERIFY_SPECIFICATION_SCRATCH "$VA" tree HEAD)
+CONSUMER_A=$(env -u VERIFY_SPECIFICATION_SCRATCH "$VA" consumer "$TREE_A" iso-a)
+TREE_B=$(env -u VERIFY_SPECIFICATION_SCRATCH "$VB" tree HEAD)
+ROOT_A=$(dirname "$(dirname "$TREE_A")")
+ROOT_B=$(dirname "$(dirname "$TREE_B")")
+env -u VERIFY_SPECIFICATION_SCRATCH "$VB" cleanup >/dev/null
+if [[ $ROOT_A != "$ROOT_B" && ! -e $TREE_B && -d $TREE_A && -f $CONSUMER_A/Consumer.csproj ]]; then
+    pass "default scratch root isolates two checkouts across cleanup ($ROOT_A vs $ROOT_B)"
+else
+    fail "two-checkout isolation failed: ROOT_A=$ROOT_A ROOT_B=$ROOT_B TREE_B_exists=$([[ -e $TREE_B ]] && echo yes || echo no) TREE_A_exists=$([[ -d $TREE_A ]] && echo yes || echo no) CONSUMER_A_exists=$([[ -f $CONSUMER_A/Consumer.csproj ]] && echo yes || echo no)"
+fi
+env -u VERIFY_SPECIFICATION_SCRATCH "$VA" cleanup >/dev/null 2>&1 || true
+
 exit $failed
